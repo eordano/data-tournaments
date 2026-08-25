@@ -1,0 +1,26 @@
+[
+  {
+    "fix_branch_id": 1,
+    "authoring_id": 1,
+    "base_sha": "b1601397651ca592061afbbfbb09417ee1895413",
+    "head_sha": "3d2b3b273c63191c8b20d74334e65a381ed8a992",
+    "patch_digest": "fd0b4917bffda0f55abfd376de484fa448f98241fe0140955399f453f6602b47",
+    "backend": "command"
+  },
+  {
+    "fix_branch_id": 2,
+    "authoring_id": 2,
+    "base_sha": "b1601397651ca592061afbbfbb09417ee1895413",
+    "head_sha": "445abc9950bd13f7d501623e22a21950f2e2cb19",
+    "patch_digest": "127a80d39818735983928d2a3e37dbfba0f5f1c69c431280fbbab51d42506838",
+    "backend": "fixture"
+  },
+  {
+    "fix_branch_id": 3,
+    "authoring_id": 3,
+    "base_sha": "b1601397651ca592061afbbfbb09417ee1895413",
+    "head_sha": "5f4d16c5c732521f50c264c33eedc79a515a14f0",
+    "patch_digest": "a9a9b0040359720f348c37692e7515f04cf10038e4946391c1b96bb411a004ac",
+    "backend": "fixture"
+  }
+]

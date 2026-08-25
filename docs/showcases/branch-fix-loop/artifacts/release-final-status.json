@@ -1,0 +1,51 @@
+{
+  "workflow_id": "release:bfl-repo:0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+  "current_stage": "promoted",
+  "stage_results": [
+    {
+      "stage": "assemble_context",
+      "status": "ok",
+      "detail": "assembly failed for project 'bfl' (no evidence collected for project 'bfl': 0 source(s) skipped (none configured)) \u2014 fell back to canned spike data"
+    },
+    {
+      "stage": "generate_workorders",
+      "status": "ok",
+      "detail": "stub: no generation domain configured on the request"
+    },
+    {
+      "stage": "judging_gate",
+      "status": "ok",
+      "detail": "score=1.0"
+    },
+    {
+      "stage": "approval",
+      "status": "ok",
+      "detail": "approved by esteban"
+    },
+    {
+      "stage": "sandbox_preflight",
+      "status": "ok",
+      "detail": "preflight-ok"
+    },
+    {
+      "stage": "build",
+      "status": "ok",
+      "detail": "dry-run-0f4b6bf3"
+    },
+    {
+      "stage": "canary",
+      "status": "ok",
+      "detail": "dry-run://canary-not-deployed"
+    },
+    {
+      "stage": "monitor_window",
+      "status": "ok",
+      "detail": "canary healthy"
+    },
+    {
+      "stage": "promote",
+      "status": "ok",
+      "detail": "promoted:dry-run-0f4b6bf3 [DRY-RUN \u2014 no shipping credentials; nothing was deployed]"
+    }
+  ]
+}

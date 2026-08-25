@@ -1,0 +1,4 @@
+short_id,week_events,user_count,level,substatus,lifetime_events,first_seen,last_seen,title,culprit,permalink
+EXPLORER-1A2B,412,87,error,ongoing,9034,2026-07-02T10:00:00Z,2026-08-15T23:41:02Z,NullReferenceException in AvatarShapeSystem.Update,AvatarShapeSystem.Update(AvatarShapeSystem.cs:214),https://example-org.sentry.io/issues/500001/
+EXPLORER-3C4D,120,15,warning,escalating,120,2026-08-10T08:12:00Z,2026-08-16T04:05:06Z,"Texture load failed &amp; retry loop stuck token xoxb-000000-FAKEFAKEFAKE leaked",TexturePipeline.Fetch(TexturePipeline.cs:88),https://example-org.sentry.io/issues/500002/
+EXPLORER-5E6F,33,9,error,new,74,2026-08-14T14:00:00Z,2026-08-16T11:22:33Z,IndexOutOfRangeException in ChatHistoryBuffer,ChatHistoryBuffer.Append(ChatHistoryBuffer.cs:41),https://example-org.sentry.io/issues/500003/

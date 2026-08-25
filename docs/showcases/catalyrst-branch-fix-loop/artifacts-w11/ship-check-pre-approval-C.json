@@ -1,0 +1,21 @@
+{
+  "fix_branch_id": 3,
+  "status": "failed",
+  "head_sha": "REDACTED",
+  "repo_path": "/private/tmp/catalyrst-wave11",
+  "branch_name": "fix/w11-cid-harness-tamper",
+  "gates": {
+    "head-current": true,
+    "status-approved": false,
+    "approval-current": false,
+    "validation-passed": false,
+    "no-ship-in-progress": true,
+    "approval-fresh": false
+  },
+  "ship_allowed": false,
+  "refusal_reason": "failed",
+  "approved_sha": null,
+  "approval_review_id": null,
+  "validation_id": 3,
+  "last_ship": null
+}

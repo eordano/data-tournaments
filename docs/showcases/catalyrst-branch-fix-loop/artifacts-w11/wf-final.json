@@ -1,0 +1,51 @@
+{
+  "workflow_id": "release:eordano/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
+  "current_stage": "promoted",
+  "stage_results": [
+    {
+      "stage": "assemble_context",
+      "status": "ok",
+      "detail": "no project supplied \u2014 canned spike data"
+    },
+    {
+      "stage": "generate_workorders",
+      "status": "ok",
+      "detail": "stub: no generation domain configured on the request"
+    },
+    {
+      "stage": "judging_gate",
+      "status": "ok",
+      "detail": "score=1.0"
+    },
+    {
+      "stage": "approval",
+      "status": "ok",
+      "detail": "approved by esteban"
+    },
+    {
+      "stage": "sandbox_preflight",
+      "status": "ok",
+      "detail": "preflight-ok"
+    },
+    {
+      "stage": "build",
+      "status": "ok",
+      "detail": "dry-run-3d2b3b27"
+    },
+    {
+      "stage": "canary",
+      "status": "ok",
+      "detail": "dry-run://canary-not-deployed"
+    },
+    {
+      "stage": "monitor_window",
+      "status": "ok",
+      "detail": "canary healthy"
+    },
+    {
+      "stage": "promote",
+      "status": "ok",
+      "detail": "promoted:dry-run-3d2b3b27 [DRY-RUN \u2014 no shipping credentials; nothing was deployed]"
+    }
+  ]
+}

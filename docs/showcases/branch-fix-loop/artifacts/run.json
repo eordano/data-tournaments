@@ -1,0 +1,217 @@
+{
+  "showcase": "branch-fix-loop",
+  "written_at": "2026-08-17T12:26:20.132294+00:00",
+  "repo_head": "db8da3f53892fb8d29fee14142086c3bcfc6d30c",
+  "data_home": "/tmp/dt-branch-e2e",
+  "fixture_repo": {
+    "path": "/tmp/bfl-repo",
+    "base_sha": "5ea984ada3f69aac0fd6328a6aa6b466a8198ee0",
+    "branch_a": {
+      "name": "fix/retry-deadline-reset",
+      "sha": "0f4b6bf3df945e621f87ed7114d8306bc9c7e40d"
+    },
+    "branch_b": {
+      "name": "fix/retry-token-clone",
+      "sha": "faaffc89a9aa9ae894b4bb3a085a19f9d3e1ec12"
+    },
+    "merge_commits_base_to_a": "none",
+    "merge_commits_base_to_b": "none"
+  },
+  "db": {
+    "branches": [
+      {
+        "id": 1,
+        "finding_id": 1,
+        "workorder_ref": "retry-carried-deadline",
+        "repo_path": "/private/tmp/bfl-repo",
+        "branch_name": "fix/retry-deadline-reset",
+        "base_sha": "5ea984ada3f69aac0fd6328a6aa6b466a8198ee0",
+        "head_sha": "0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+        "patch_digest": "c69a569617072058979c74738802b81c51cd0c1fe194194fa4f2a4d1823bb4e0",
+        "status": "approved",
+        "created_at": "2026-08-17 12:08:21",
+        "updated_at": "2026-08-17 12:12:22"
+      },
+      {
+        "id": 2,
+        "finding_id": 1,
+        "workorder_ref": "retry-carried-deadline",
+        "repo_path": "/private/tmp/bfl-repo",
+        "branch_name": "fix/retry-token-clone",
+        "base_sha": "5ea984ada3f69aac0fd6328a6aa6b466a8198ee0",
+        "head_sha": "faaffc89a9aa9ae894b4bb3a085a19f9d3e1ec12",
+        "patch_digest": "973b2cca1a7599421673d9353ed8cb32d7886f9bdd8e8b2b892a8870be22d975",
+        "status": "failed",
+        "created_at": "2026-08-17 12:08:21",
+        "updated_at": "2026-08-17 12:08:24"
+      }
+    ],
+    "validations": [
+      {
+        "id": 1,
+        "fix_branch_id": 1,
+        "tested_sha": "fcab9af9c0be7ff331f700c4e1134bef0150e43e",
+        "red_cmd": "./red.sh",
+        "red_intended": 2,
+        "red_observed": 2,
+        "green_cmd": "./green.sh",
+        "green_total": 3,
+        "green_passed": 3,
+        "guard_total": 2,
+        "guard_passed": 2,
+        "passed": 1,
+        "log_digest": "517372a78ed599fc34ad144796fc509e0d79fbb982b2af4541b4607a9aafb729",
+        "created_at": "2026-08-17 12:08:23"
+      },
+      {
+        "id": 2,
+        "fix_branch_id": 2,
+        "tested_sha": "faaffc89a9aa9ae894b4bb3a085a19f9d3e1ec12",
+        "red_cmd": "./red.sh",
+        "red_intended": 2,
+        "red_observed": 2,
+        "green_cmd": "./green.sh",
+        "green_total": 3,
+        "green_passed": 3,
+        "guard_total": 2,
+        "guard_passed": 1,
+        "passed": 0,
+        "log_digest": "REDACTED",
+        "created_at": "2026-08-17 12:08:24"
+      },
+      {
+        "id": 3,
+        "fix_branch_id": 1,
+        "tested_sha": "0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+        "red_cmd": "./red.sh",
+        "red_intended": 2,
+        "red_observed": 2,
+        "green_cmd": "./green.sh",
+        "green_total": 3,
+        "green_passed": 3,
+        "guard_total": 2,
+        "guard_passed": 2,
+        "passed": 1,
+        "log_digest": "517372a78ed599fc34ad144796fc509e0d79fbb982b2af4541b4607a9aafb729",
+        "created_at": "2026-08-17 12:11:33"
+      }
+    ],
+    "reviews": [
+      {
+        "id": 1,
+        "fix_branch_id": 1,
+        "tested_sha": "fcab9af9c0be7ff331f700c4e1134bef0150e43e",
+        "reviewer": "esteban",
+        "decision": "approve",
+        "rationale": "RED 2/2 GREEN 3/3 GUARD 2/2 at current head; per-attempt deadline from config + abort logging satisfies rule retry-paths-log-and-guard v1.",
+        "approval_event_id": 1,
+        "created_at": "2026-08-17 12:08:58"
+      },
+      {
+        "id": 2,
+        "fix_branch_id": 1,
+        "tested_sha": "0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+        "reviewer": "esteban",
+        "decision": "approve",
+        "rationale": "Re-validated at new head 0f4b6bf3df94 after post-approval change: RED 2/2 GREEN 3/3 GUARD 2/2. Approving the exact tested SHA.",
+        "approval_event_id": 2,
+        "created_at": "2026-08-17 12:12:22"
+      }
+    ],
+    "approval_events": [
+      {
+        "id": 1,
+        "temporal_workflow_id": "branchfix:fix/retry-deadline-reset:fcab9af9c0be",
+        "decision": "approved",
+        "approver": "esteban",
+        "reason": "RED 2/2 GREEN 3/3 GUARD 2/2 at current head; per-attempt deadline from config + abort logging satisfies rule retry-paths-log-and-guard v1.",
+        "policy_id": 1,
+        "created_at": "2026-08-17 12:08:58"
+      },
+      {
+        "id": 2,
+        "temporal_workflow_id": "branchfix:fix/retry-deadline-reset:0f4b6bf3df94",
+        "decision": "approved",
+        "approver": "esteban",
+        "reason": "Re-validated at new head 0f4b6bf3df94 after post-approval change: RED 2/2 GREEN 3/3 GUARD 2/2. Approving the exact tested SHA.",
+        "policy_id": 1,
+        "created_at": "2026-08-17 12:12:22"
+      },
+      {
+        "id": 3,
+        "temporal_workflow_id": "release:bfl-repo:0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+        "decision": "approved",
+        "approver": "esteban",
+        "reason": "Branch A approved at tested SHA 0f4b6bf3df94 (RED 2/2 GREEN 3/3 GUARD 2/2); shipping the exact validated head only.",
+        "policy_id": 2,
+        "created_at": "2026-08-17 12:25:17"
+      }
+    ],
+    "workflow_runs": [
+      {
+        "id": 1,
+        "spec_digest": null,
+        "temporal_workflow_id": "release:bfl-repo:0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+        "temporal_run_id": "01a00faa-fe55-78dd-b72f-4e0a6b0640d2",
+        "status": "done",
+        "environment_id": null,
+        "detail": "{\"repo\": \"bfl-repo\", \"commit\": \"0f4b6bf3df945e621f87ed7114d8306bc9c7e40d\", \"project\": \"bfl\", \"requested_by\": \"esteban\", \"build_id\": \"dry-run-0f4b6bf3\", \"result\": \"promoted\"}",
+        "stage_history": "[{\"stage\": \"assemble_context\", \"status\": \"ok\", \"at\": \"2026-08-17T12:20:59Z\", \"detail\": {\"note\": \"assembly failed for project 'bfl' (no evidence collected for project 'bfl': 0 source(s) skipped (none configured)) \\u2014 fell back to canned spike data\", \"snapshot_digest\": \"\", \"summary\": \"assembly failed for project 'bfl' (no evidence collected for project 'bfl': 0 source(s) skipped (none configured)) \\u2014 fell back to canned spike data\"}}, {\"stage\": \"generate_workorders\", \"status\": \"ok\", \"at\": \"2026-08-17T12:20:59Z\", \"detail\": {\"summary\": \"stub: no generation domain configured on the request\"}}, {\"stage\": \"judging_gate\", \"status\": \"ok\", \"at\": \"2026-08-17T12:20:59Z\", \"detail\": {\"summary\": \"score=1.0\"}}, {\"stage\": \"approval\", \"status\": \"ok\", \"at\": \"2026-08-17T12:25:17Z\", \"detail\": {\"summary\": \"approved by esteban\"}}, {\"stage\": \"sandbox_preflight\", \"status\": \"ok\", \"at\": \"2026-08-17T12:25:17Z\", \"detail\": {\"summary\": \"preflight-ok\"}}, {\"stage\": \"build\", \"status\": \"ok\", \"at\": \"2026-08-17T12:25:17Z\", \"detail\": {\"summary\": \"dry-run-0f4b6bf3\"}}, {\"stage\": \"canary\", \"status\": \"ok\", \"at\": \"2026-08-17T12:25:17Z\", \"detail\": {\"summary\": \"dry-run://canary-not-deployed\"}}, {\"stage\": \"monitor_window\", \"status\": \"ok\", \"at\": \"2026-08-17T12:25:22Z\", \"detail\": {\"summary\": \"canary healthy\"}}, {\"stage\": \"promote\", \"status\": \"ok\", \"at\": \"2026-08-17T12:25:22Z\", \"detail\": {\"summary\": \"promoted:dry-run-0f4b6bf3 [DRY-RUN \\u2014 no shipping credentials; nothing was deployed]\"}}]",
+        "started_at": "2026-08-17 12:20:59",
+        "finished_at": "2026-08-17T12:25:22Z"
+      }
+    ]
+  },
+  "artifacts": {
+    "branch-A-final.json": {
+      "sha256": "REDACTED"
+    },
+    "branch-A.json": {
+      "sha256": "REDACTED"
+    },
+    "branch-B-final.json": {
+      "sha256": "REDACTED"
+    },
+    "branch-B.json": {
+      "sha256": "REDACTED"
+    },
+    "release-final-status.json": {
+      "sha256": "REDACTED"
+    },
+    "validation-A-revalidated.json": {
+      "sha256": "REDACTED"
+    },
+    "validation-A.json": {
+      "sha256": "0d914fdf3da39502079e687e0230ce6e4a705427478c54ada2f5f297d2a56479"
+    },
+    "validation-B.json": {
+      "sha256": "3a1066bf09575f945fca5c3ad5bd7da2924f290f6381909638797872bad756b5"
+    }
+  },
+  "screenshots": {
+    "01-branch-list.png": {
+      "sha256": "eb3146163c96e83f9e866d795ec59d66a5223eeda8e86f174f1a9050f623914c"
+    },
+    "02-branch-A-validated.png": {
+      "sha256": "REDACTED"
+    },
+    "03-branch-B-failed-no-approve.png": {
+      "sha256": "REDACTED"
+    },
+    "04-branch-A-approved.png": {
+      "sha256": "4b80d4cfe564b09ba944978967f4b7c28203d906dfcdec15d0a358c35060d8ef"
+    },
+    "05-branch-A-stale-after-head-change.png": {
+      "sha256": "3fda75d80fc9cb94d524110b1a19f8bb4f517e9a9475b44da0e5be948bc91202"
+    },
+    "06-branch-A-reapproved-new-head.png": {
+      "sha256": "REDACTED"
+    },
+    "07-release-awaiting-approval.png": {
+      "sha256": "REDACTED"
+    },
+    "08-release-approved.png": {
+      "sha256": "REDACTED"
+    }
+  }
+}

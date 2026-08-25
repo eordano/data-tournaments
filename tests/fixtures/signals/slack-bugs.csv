@@ -1,0 +1,8 @@
+ts,date,replies,text
+1755012345.000100,2026-08-12,4,"TITLE: Portable experience crashes on teleport
+DESCRIPTION: Teleporting while a portable experience is running crashes the client &amp; drops the session. Reported by <@U0FAKE123> with debug tokenREDACTED pasted by mistake.
+STR: 1. Launch a portable experience 2. Teleport to another realm 3. Observe crash
+SYSTEM: Windows 11, RTX 3070, client 0.54.1
+REPRODUCTION INDEX: 5/5
+REPORTER: <@U0FAKE123>"
+1755098765.000200,2026-08-13,0,"saw a weird thing where the minimap goes black after alt-tabbing for a while, no repro steps sorry — ping <@U9FAKE987> if you need my logs, slack token xREDACTEDas in the paste oops"

@@ -1,0 +1,16 @@
+{
+  "build": 187,
+  "buildtargetid": "windows-dev",
+  "buildStatus": "success",
+  "scmBranch": "dev",
+  "lastBuiltRevision": "c08a72ce5187aaaabbbbccccddddeeeeffff0000",
+  "totalTimeInSeconds": 2143,
+  "created": "2026-08-17T11:00:00Z",
+  "finished": "2026-08-17T11:35:43Z",
+  "links": {
+    "download_primary": {
+      "method": "get",
+      "href": "https://ucb-artifacts.example/orgs/dcl/projects/unity-explorer/windows-dev/187.zip"
+    }
+  }
+}

@@ -1,0 +1,94 @@
+# Caddyfile for data-tournaments
+#
+# One Caddy fronting both the Phoenix app (this repo) and self-hosted
+# Langfuse, so a single public tunnel (cloudflared/tailscale funnel/ngrok)
+# can expose everything.
+#
+# Usage:
+#
+#   nix develop --command bash -c '
+#     set -a && . .env && set +a
+#     caddy run --config infra/Caddyfile --adapter caddyfile
+#   '
+#
+# Or run as a side-by-side process while `mix phx.server` runs:
+#
+#   # terminal 1
+#   nix develop --command bash -c 'set -a && . .env && set +a && cd ui && PORT=4777 mix phx.server'
+#
+#   # terminal 2
+#   nix develop --command bash -c 'caddy run --config infra/Caddyfile --adapter caddyfile'
+#
+# Then point your tunnel at localhost:8080 and you're done.
+#
+# Configuration via env vars (with sensible defaults):
+#
+#   PHOENIX_UPSTREAM   default localhost:4777   — where Phoenix is bound
+#   LANGFUSE_UPSTREAM  default langfuse.example  — where Langfuse lives
+#                                                 (FQDN over HTTPS, or host:port)
+#   PROXY_LISTEN       default :8080            — what Caddy binds locally
+
+{
+	# Admin API on a non-default port so we can hot-reload via
+	# `caddy reload --config infra/Caddyfile --address localhost:2099`.
+	# The default :2019 sometimes collides with other dev tools.
+	admin localhost:2099
+
+	# Auto HTTPS off for local dev; the public tunnel terminates TLS.
+	# Add `tls internal` per site below if you want self-signed certs.
+	auto_https off
+}
+
+# ── Local dev: single port, path-based routing ────────────────────────────
+# Browser hits http://localhost:8080  → Phoenix
+#              http://localhost:8080/lf/api/*  → Langfuse REST API
+#
+# (We don't proxy the Langfuse UI under a path prefix because Langfuse's
+# Next.js front-end uses absolute paths that break behind a sub-path. Use
+# the dedicated hostname for the Langfuse UI; this proxy is for REST calls
+# the Phoenix app makes server-side OR for one-off curl debugging.)
+
+{$PROXY_LISTEN::8080} {
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+
+	# Langfuse REST API → upstream Langfuse
+	# `handle_path /lf/*` strips the matched `/lf` prefix and forwards the
+	# rest, so /lf/api/public/v2/... → /api/public/v2/... upstream.
+	handle_path /lf/* {
+		reverse_proxy https://{$LANGFUSE_UPSTREAM:langfuse.example} {
+			header_up Host {$LANGFUSE_UPSTREAM:langfuse.example}
+			header_up X-Forwarded-Proto https
+		}
+	}
+
+	# Everything else → Phoenix
+	# WebSockets included (LiveView needs them).
+	handle {
+		reverse_proxy {$PHOENIX_UPSTREAM:localhost:4777} {
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+		}
+	}
+}
+
+# ── Production: hostname-based routing behind one public tunnel ────────────
+# Uncomment + edit the hostnames to match your tunnel setup. With these in
+# place, point ONE tunnel at Caddy's :8080 and route both hostnames to it.
+# Caddy picks the right upstream by Host header.
+#
+# app.example.com {
+# 	reverse_proxy {$PHOENIX_UPSTREAM:localhost:4777} {
+# 		header_up X-Forwarded-Proto {scheme}
+# 		header_up X-Forwarded-Host {host}
+# 	}
+# }
+#
+# langfuse.example.com {
+# 	reverse_proxy https://{$LANGFUSE_UPSTREAM:langfuse.example} {
+# 		header_up Host {$LANGFUSE_UPSTREAM:langfuse.example}
+# 	}
+# }

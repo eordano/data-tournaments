@@ -1,0 +1,37 @@
+{
+  "validation_id": 3,
+  "tested_sha": "5f4d16c5c732521f50c264c33eedc79a515a14f0",
+  "passed": false,
+  "status": "failed",
+  "refused": "harness-tampered",
+  "tampered_paths": [
+    "crates/catalyrst-hashing/tests/harness_guard.rs"
+  ],
+  "protected_paths": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "crates/catalyrst-hashing/tests/fixtures.rs",
+    "crates/catalyrst-hashing/tests/harness_guard.rs",
+    "crates/catalyrst-hashing/tests/harness_red.rs",
+    "green.sh",
+    "guard.sh",
+    "red.sh",
+    "rust-toolchain.toml"
+  ],
+  "protected_source": {
+    "red.sh": "script",
+    "green.sh": "script",
+    "guard.sh": "script",
+    "Cargo.toml": "manifest-glob",
+    "Cargo.lock": "manifest-glob",
+    "rust-toolchain.toml": "manifest-glob",
+    "crates/catalyrst-hashing/tests/harness_red.rs": "manifest-glob",
+    "crates/catalyrst-hashing/tests/harness_guard.rs": "manifest-glob",
+    "crates/catalyrst-hashing/tests/fixtures.rs": "manifest-glob"
+  },
+  "harness_digest": null,
+  "log_digest": "0107b875ed548400a585f97fe81ef3c8f0f0098b285346782da818e08cdf0c1e",
+  "red": null,
+  "green": null,
+  "guard": null
+}

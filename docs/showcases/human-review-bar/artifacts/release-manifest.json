@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "repo": "unity-explorer",
+  "commit": "51ea689",
+  "snapshot_digest": "",
+  "work_order_ids": [
+    "5",
+    "6",
+    "7",
+    "8"
+  ],
+  "approval_event_ids": [
+    "2"
+  ],
+  "pr": null,
+  "builds": [
+    {
+      "build_id": "dry-run-51ea689",
+      "status": "dry-run"
+    }
+  ],
+  "canary": {
+    "healthy": true,
+    "detail": "dry-run://canary-not-deployed"
+  },
+  "outcome": "promoted [DRY-RUN \u2014 no shipping credentials; nothing was deployed]",
+  "written_at": "2026-08-17T11:08:00Z",
+  "manifest_digest": "REDACTED"
+}

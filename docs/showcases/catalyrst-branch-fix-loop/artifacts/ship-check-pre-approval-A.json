@@ -1,0 +1,16 @@
+{
+  "fix_branch_id": 1,
+  "status": "validated",
+  "head_sha": "REDACTED",
+  "repo_path": "/private/tmp/catalyrst-e2e",
+  "branch_name": "fix/cidv1-exact-length",
+  "gates": {
+    "head-current": true,
+    "status-approved": false,
+    "approval-current": false,
+    "validation-passed": true
+  },
+  "ship_allowed": false,
+  "refusal_reason": "not-approved",
+  "approved_sha": null
+}

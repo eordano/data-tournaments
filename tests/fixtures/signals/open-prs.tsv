@@ -1,0 +1,3 @@
+9750	fix/avatar-shape-nre	Fix NRE in AvatarShapeSystem when profile is null
+9751	feat/minimap-refresh	Refresh minimap tiles on realm change
+9752	chore/texture-pool	Pool texture buffers in TexturePipeline

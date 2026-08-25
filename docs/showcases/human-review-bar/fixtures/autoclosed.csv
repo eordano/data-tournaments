@@ -1,0 +1,3 @@
+issue,title,created,auto_closed,body
+5150,Release retry does not actually retry after timeout,2026-05-02,2026-07-30,"Retry path clones the release target and calls Execute again, but the timeout from attempt 1 is carried into the clone so attempt 2 aborts instantly. Auto-closed by the stale bot with no fix. Reported twice since."
+5033,Ban expiry renders unparsed timestamp,2026-04-11,2026-07-14,"When expiresAt is not RFC3339 the raw string leaks into the ban dialog. Auto-closed as stale."

@@ -1,0 +1,13 @@
+{
+  "created": [],
+  "deduped": [],
+  "skipped_existing": [
+    "REDACTED",
+    "REDACTED",
+    "REDACTED"
+  ],
+  "evidence_count": 3,
+  "per_source": {
+    "sentry-cid": 3
+  }
+}

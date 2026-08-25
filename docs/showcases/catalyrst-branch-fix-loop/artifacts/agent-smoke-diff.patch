@@ -1,0 +1,26 @@
+diff --git a/crates/catalyrst-hashing/src/verify.rs b/crates/catalyrst-hashing/src/verify.rs
+index d9ae1b3..317a8bc 100644
+--- a/crates/catalyrst-hashing/src/verify.rs
++++ b/crates/catalyrst-hashing/src/verify.rs
+@@ -1,5 +1,12 @@
+ use crate::hash::{hash_bytes, hash_bytes_v1};
+ 
++/// Exact encoded length of a base32 CIDv1 over a sha2-256 multihash: the
++/// multibase prefix ('b') plus base32-nopad of the 36 CID bytes
++/// (version + single-byte codec + multihash code/length + 32-byte digest),
++/// i.e. 1 + ceil(36 * 8 / 5) = 59. Both codecs this crate emits (raw 0x55
++/// and dag-pb 0x70) are single-byte varints, so the length is fixed.
++const CIDV1_SHA256_LEN: usize = 59;
++
+ pub fn is_canonical_cid(s: &str) -> bool {
+     if s.is_empty() || s.len() > 100 {
+         return false;
+@@ -13,7 +20,7 @@ pub fn is_canonical_cid(s: &str) -> bool {
+         });
+ 
+     let cidv1 = s.starts_with("ba")
+-        && s.len() >= 58
++        && s.len() == CIDV1_SHA256_LEN
+         && s[2..].chars().all(|c| matches!(c, 'a'..='z' | '2'..='7'));
+     cidv0 || cidv1
+ }

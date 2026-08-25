@@ -1,0 +1,16 @@
+{
+  "fix_branch_id": 3,
+  "status": "failed",
+  "head_sha": "d2de896f527b4d5850ded274b3d31e90cf900a7b",
+  "repo_path": "/private/tmp/catalyrst-e2e",
+  "branch_name": "fix/cidv1-harness-tamper",
+  "gates": {
+    "head-current": true,
+    "status-approved": false,
+    "approval-current": false,
+    "validation-passed": false
+  },
+  "ship_allowed": false,
+  "refusal_reason": "failed",
+  "approved_sha": null
+}

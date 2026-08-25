@@ -1,0 +1,20 @@
+{
+  "workflow_id": "release:catalyrst-e2e:REDACTED",
+  "head_sha": "8c329d02aac36efabe4267b4b312fd5cd7e8c144",
+  "repo": "catalyrst-e2e",
+  "argv": [
+    "/Users/user/Projects/data-tournaments/spikes/temporal-unity-release/.venv/bin/python",
+    "-m",
+    "bin.release_workflow.client",
+    "start",
+    "catalyrst-e2e",
+    "REDACTED",
+    "--project",
+    "catalyrst",
+    "--domain",
+    "",
+    "--requested-by",
+    "esteban"
+  ],
+  "output": "started releaseREDACTED\n"
+}

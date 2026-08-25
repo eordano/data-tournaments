@@ -1,0 +1,39 @@
+{
+  "name": "actions-style-hermes",
+  "seed": 20260416,
+  "db_path": "/tmp/actions-style-hermes.db",
+  "workdir": "/tmp/actions-style-hermes",
+  "advance": "synthesis",
+  "inputs": [
+    "/Users/user/projects/new-garden/app/actions/alicia.ts",
+    "/Users/user/projects/new-garden/app/actions/bookmarks.ts",
+    "/Users/user/projects/new-garden/app/actions/calendar.ts",
+    "/Users/user/projects/new-garden/app/actions/contacts.ts",
+    "/Users/user/projects/new-garden/app/actions/conversation-search.ts",
+    "/Users/user/projects/new-garden/app/actions/cron.ts",
+    "/Users/user/projects/new-garden/app/actions/daily.ts",
+    "/Users/user/projects/new-garden/app/actions/dashboard.ts",
+    "/Users/user/projects/new-garden/app/actions/emails.ts",
+    "/Users/user/projects/new-garden/app/actions/entities.ts",
+    "/Users/user/projects/new-garden/app/actions/jd.ts",
+    "/Users/user/projects/new-garden/app/actions/note-attachments.ts",
+    "/Users/user/projects/new-garden/app/actions/note-links.ts",
+    "/Users/user/projects/new-garden/app/actions/notes.ts",
+    "/Users/user/projects/new-garden/app/actions/rooms.ts",
+    "/Users/user/projects/new-garden/app/actions/sessions.ts",
+    "/Users/user/projects/new-garden/app/actions/tasks.ts"
+  ],
+  "required_sections": [
+    "## Shared patterns",
+    "## Divergent patterns",
+    "## Naming & exports",
+    "## Validation",
+    "## Error handling",
+    "## Auth & session",
+    "## Return shapes",
+    "## Database access",
+    "## Other conventions",
+    "## Guideline candidates"
+  ],
+  "match_prompt": "You are judging a single match in a code-style tournament whose goal is to homogenize conventions across `app/actions/*.ts` (Next.js server actions).\n\nYour match label: {LABEL}\nNumber of inputs: {N_INPUTS}\n\n### Tools\nYou have EXACTLY two tools:\n  - read_file(path) — read a file from disk\n  - pick_winner(winner_id, reasoning, markdown) — declare which input wins (1 or 2), give a short reasoning, submit a synthesis markdown, and STOP.\nNo shell, no web, no edit, no write, no browser.\n\n### Inputs\n{INPUTS}\n\n### Task\nRead each input fully via read_file. Decide which input has the better conventions to model future code on (more consistent, more idiomatic, safer error handling, clearer auth boundaries, etc.). Then call pick_winner with:\n  - winner_id: 1 or 2 — the position of the chosen input above\n  - reasoning: 1–3 sentences naming the decisive factor(s)\n  - markdown: a synthesis containing EXACTLY these section headers, in this order:\n\n```\n# Match {LABEL} — <short title>\n\n## Shared patterns\n- ...\n\n## Divergent patterns\n- ...\n\n## Naming & exports\n- ...\n\n## Validation\n- ...\n\n## Error handling\n- ...\n\n## Auth & session\n- ...\n\n## Return shapes\n- ...\n\n## Database access\n- ...\n\n## Other conventions\n- ...\n\n## Guideline candidates\n1. ...\n2. ...\n```\n\nAfter calling pick_winner, STOP — do not emit further text or tool calls.\n\nConstraints:\n- Under 500 words inside the markdown.\n- The synthesis must stand alone — downstream rounds will NOT see the original files, only this markdown.\n- Identify 5–12 prescriptive, testable guideline candidates.\n- Be concrete (quote short identifiers when useful) but don't paste whole functions.\n- Your guideline candidates should reflect the WINNER's conventions, citing the loser only to contrast."
+}

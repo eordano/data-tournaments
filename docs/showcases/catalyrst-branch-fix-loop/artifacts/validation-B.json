@@ -1,0 +1,25 @@
+{
+  "validation_id": 2,
+  "tested_sha": "e47f9e2bc9e5cba053d0d2cd6c484239bf26c206",
+  "passed": false,
+  "status": "failed",
+  "log_digest": "a2e2a5f36d3bcdeaf047f5ffd6464b5506e0fe28ab150d314d847403f0d556fd",
+  "harness_digest": "b6f9555e853447fec263920b8bca8a142ea6069c548ca8fc88a82aa508b6da12",
+  "protected_paths": [
+    "green.sh",
+    "guard.sh",
+    "red.sh"
+  ],
+  "red": [
+    1,
+    1
+  ],
+  "green": [
+    30,
+    30
+  ],
+  "guard": [
+    0,
+    2
+  ]
+}

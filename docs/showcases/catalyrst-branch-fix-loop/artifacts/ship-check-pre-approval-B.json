@@ -1,0 +1,16 @@
+{
+  "fix_branch_id": 2,
+  "status": "failed",
+  "head_sha": "e47f9e2bc9e5cba053d0d2cd6c484239bf26c206",
+  "repo_path": "/private/tmp/catalyrst-e2e",
+  "branch_name": "fix/cidv1-min-length-59",
+  "gates": {
+    "head-current": true,
+    "status-approved": false,
+    "approval-current": false,
+    "validation-passed": false
+  },
+  "ship_allowed": false,
+  "refusal_reason": "failed",
+  "approved_sha": null
+}

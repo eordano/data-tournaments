@@ -1,0 +1,51 @@
+{
+  "workflow_id": "release:bfl-repo:e4proof4",
+  "current_stage": "promoted",
+  "stage_results": [
+    {
+      "stage": "assemble_context",
+      "status": "ok",
+      "detail": "assembled from catalog project 'bfl'"
+    },
+    {
+      "stage": "generate_workorders",
+      "status": "ok",
+      "detail": "generated 2 work orders, enqueued 1 pairs, 0 failures"
+    },
+    {
+      "stage": "judging_gate",
+      "status": "ok",
+      "detail": "score=1.0"
+    },
+    {
+      "stage": "approval",
+      "status": "ok",
+      "detail": "approved by esteban"
+    },
+    {
+      "stage": "sandbox_preflight",
+      "status": "ok",
+      "detail": "preflight-ok"
+    },
+    {
+      "stage": "build",
+      "status": "ok",
+      "detail": "dry-run-e4proof4"
+    },
+    {
+      "stage": "canary",
+      "status": "ok",
+      "detail": "dry-run://canary-not-deployed"
+    },
+    {
+      "stage": "monitor_window",
+      "status": "ok",
+      "detail": "canary healthy"
+    },
+    {
+      "stage": "promote",
+      "status": "ok",
+      "detail": "promoted:dry-run-e4proof4 [DRY-RUN \u2014 no shipping credentials; nothing was deployed]"
+    }
+  ]
+}

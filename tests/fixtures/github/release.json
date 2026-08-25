@@ -1,0 +1,20 @@
+{
+  "url": "https://api.github.com/repos/acme/widgets/releases/198765432",
+  "html_url": "https://github.com/acme/widgets/releases/tag/v1.4.0",
+  "id": 198765432,
+  "node_id": "RE_kwDORel9012",
+  "tag_name": "v1.4.0",
+  "target_commitish": "main",
+  "name": "Widgets 1.4.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-08-12T10:00:00Z",
+  "published_at": "2026-08-12T10:05:00Z",
+  "author": {
+    "login": "release-bot",
+    "id": 112233,
+    "type": "Bot"
+  },
+  "assets": [],
+  "body": "## Highlights\n\n- graceful empty-config handling\n- faster startup\n\nFull changelog: https://github.com/acme/widgets/compare/v1.3.0...v1.4.0"
+}

@@ -1,0 +1,136 @@
+{
+  "walkthrough": "catalyrst-branch-fix-loop WAVE-11 (strict causal order, live-agent authored)",
+  "mandate": "team of engineers automating bugfixes; user-devs at the END; every branch validated ALONE at pinned counts; blockers fixed",
+  "target_repo": {
+    "remote": "https://github.com/eordano/catalyrst",
+    "upstream_sha": "009d0fe5dbce2689b1946a64a196a8a9e3bf99d8",
+    "campaign_base": "b1601397651ca592061afbbfbb09417ee1895413",
+    "clone": "/tmp/catalyrst-wave11"
+  },
+  "platform_head_at_run": "REDACTED",
+  "strict_causal_order": [
+    "1 intake (3 FIXTURE sentry signals -> findings + frozen evidence)",
+    "2 dossier (CONFIRM lens + validation row incl. oracle note) -> confirmed_validated",
+    "3 domain + REAL WorkOrder generation (2 orders, 1 pair)",
+    "4 HUMAN browser judgement -> winning WorkOrder extracted",
+    "5 branch authoring FROM the judged WorkOrder: A=COMMAND backend (live claude agent), B/C fixtures",
+    "6 per-branch isolated validation, trusted+widened harness, pinned counts red=1/1,green=30/30,guard=5/5",
+    "7 gateway refusal matrix pre-approval (all three refused)",
+    "8 developer decisions in browser (A approved; B/C no decision path)",
+    "9 gateway-only ship -> status shipping + fix_branch_ship row",
+    "10 one-click audited release approval (audit + delivery in one click)",
+    "11 completion sync -> shipped only when the workflow finished"
+  ],
+  "oracle": {
+    "source": "github.com/decentraland/hashing test/fixtures/hashes",
+    "result": "3/3 on base and on the exact-length fix; integrated into guard.sh (GUARD 5 = 2 exact-length + 3 oracle)"
+  },
+  "live_agent": {
+    "backend": "command",
+    "cli": "claude-achtung-achtung",
+    "workorder": "judged winner (b-clearly-better): 'Fix is_canonical_cid: enforce exact CIDv1 decoded-length semantics'",
+    "agent_approach": "structural multihash decode (varint version/codec + multihash header + declared digest length) \u2014 STRONGER than the fixture exact-59 pin; MAX_CID_LEN=128",
+    "head": "3d2b3b273c63191c8b20d74334e65a381ed8a992"
+  },
+  "branches": [
+    {
+      "id": 1,
+      "branch_name": "fix/w11-cid-exact-length",
+      "status": "shipping",
+      "base_sha": "b1601397651ca592061afbbfbb09417ee1895413",
+      "head_sha": "3d2b3b273c63191c8b20d74334e65a381ed8a992",
+      "patch_digest": "fd0b4917bffda0f55abfd376de484fa448f98241fe0140955399f453f6602b47"
+    },
+    {
+      "id": 2,
+      "branch_name": "fix/w11-cid-min-length",
+      "status": "failed",
+      "base_sha": "b1601397651ca592061afbbfbb09417ee1895413",
+      "head_sha": "445abc9950bd13f7d501623e22a21950f2e2cb19",
+      "patch_digest": "127a80d39818735983928d2a3e37dbfba0f5f1c69c431280fbbab51d42506838"
+    },
+    {
+      "id": 3,
+      "branch_name": "fix/w11-cid-harness-tamper",
+      "status": "failed",
+      "base_sha": "b1601397651ca592061afbbfbb09417ee1895413",
+      "head_sha": "5f4d16c5c732521f50c264c33eedc79a515a14f0",
+      "patch_digest": "a9a9b0040359720f348c37692e7515f04cf10038e4946391c1b96bb411a004ac"
+    }
+  ],
+  "merge_commits_per_branch": {
+    "fix/w11-cid-exact-length": 0,
+    "fix/w11-cid-min-length": 0,
+    "fix/w11-cid-harness-tamper": 0
+  },
+  "same_base_invariant": true,
+  "validations": {
+    "A": {
+      "passed": true,
+      "red": [
+        1,
+        1
+      ],
+      "green": [
+        30,
+        30
+      ],
+      "guard": [
+        5,
+        5
+      ],
+      "harness_digest": "36e45bd6d4237290b36346bd5d28a07f0dcfc0f46fc02ee08e8fa9c397ccad86",
+      "protected_paths": 9,
+      "protected_by_source": {
+        "script": 3,
+        "manifest-glob": 6
+      }
+    },
+    "B": "guard 3/5 \u2014 lower-bound fix passes repro, fails oversized guards -> failed",
+    "C": "HARNESS-TAMPERED: crates/catalyrst-hashing/tests/harness_guard.rs \u2014 INNER TEST SOURCE tamper caught by wave-11 transitive protection; refused pre-execution; sentinel absent"
+  },
+  "reviews": [
+    {
+      "id": 1,
+      "fix_branch_id": 1,
+      "tested_sha": "3d2b3b273c63191c8b20d74334e65a381ed8a992",
+      "reviewer": "esteban",
+      "decision": "approve",
+      "approval_event_id": 1
+    }
+  ],
+  "audit_events": [
+    {
+      "id": 1,
+      "temporal_workflow_id": "branchfix:fix/w11-cid-exact-length:3d2b3b273c63",
+      "decision": "approved",
+      "approver": "esteban"
+    },
+    {
+      "id": 2,
+      "temporal_workflow_id": "release:eordano/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
+      "decision": "approved",
+      "approver": "esteban"
+    }
+  ],
+  "ship_rows": [
+    {
+      "id": 1,
+      "fix_branch_id": 1,
+      "workflow_id": "release:eordano/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
+      "tested_sha": "3d2b3b273c63191c8b20d74334e65a381ed8a992",
+      "requested_by": "esteban",
+      "approval_review_id": 1,
+      "validation_id": 1,
+      "created_at": "2026-08-17 22:47:40"
+    }
+  ],
+  "workflow_runs": [
+    {
+      "temporal_workflow_id": "release:eordano/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
+      "status": "done"
+    }
+  ],
+  "final_branch_status": "shipped",
+  "completion_sync": "workflow done -> sync_completion flipped shipping->shipped; B/C have zero workflow runs"
+}

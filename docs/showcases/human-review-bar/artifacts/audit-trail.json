@@ -1,0 +1,105 @@
+{
+  "approval_events": [
+    {
+      "id": 1,
+      "temporal_workflow_id": "rule:retry-paths-log-and-guard:v1",
+      "decision": "approved",
+      "approver": "esteban",
+      "reason": "promote review_rule_proposal 1 -> retry-paths-log-and-guard v1",
+      "policy_id": 1,
+      "created_at": "2026-08-17 10:56:12"
+    },
+    {
+      "id": 2,
+      "temporal_workflow_id": "release:unity-explorer:51ea689",
+      "decision": "approved",
+      "approver": "esteban",
+      "reason": "Judgement #5: validated P0 work order meets the review bar (RED 3/3, GREEN 5/5, 2 guards).",
+      "policy_id": 2,
+      "created_at": "2026-08-17 11:04:27"
+    }
+  ],
+  "workflow_run": {
+    "temporal_workflow_id": "release:unity-explorer:51ea689",
+    "temporal_run_id": "01a00f5e-4de5-7e7b-b1b5-7487cb8f7129",
+    "status": "done",
+    "stage_history": [
+      {
+        "stage": "assemble_context",
+        "status": "ok",
+        "at": "2026-08-17T10:57:13Z",
+        "detail": {
+          "note": "assembly failed for project 'unity-explorer-hrb' (no evidence collected for project 'unity-explorer-hrb': 4 source(s) skipped (dedup-lists, gh-autoclosed, sentry-week, slack-bugs)) \u2014 fell back to canned spike data",
+          "snapshot_digest": "",
+          "summary": "assembly failed for project 'unity-explorer-hrb' (no evidence collected for project 'unity-explorer-hrb': 4 source(s) skipped (dedup-lists, gh-autoclosed, sentry-week, slack-bugs)) \u2014 fell back to canned spike data"
+        }
+      },
+      {
+        "stage": "generate_workorders",
+        "status": "ok",
+        "at": "2026-08-17T10:57:13Z",
+        "detail": {
+          "summary": "stub: no generation domain configured on the request"
+        }
+      },
+      {
+        "stage": "judging_gate",
+        "status": "ok",
+        "at": "2026-08-17T10:57:13Z",
+        "detail": {
+          "summary": "score=1.0"
+        }
+      },
+      {
+        "stage": "approval",
+        "status": "ok",
+        "at": "2026-08-17T11:05:31Z",
+        "detail": {
+          "summary": "approved by esteban"
+        }
+      },
+      {
+        "stage": "sandbox_preflight",
+        "status": "ok",
+        "at": "2026-08-17T11:05:31Z",
+        "detail": {
+          "summary": "preflight-ok"
+        }
+      },
+      {
+        "stage": "build",
+        "status": "ok",
+        "at": "2026-08-17T11:05:31Z",
+        "detail": {
+          "summary": "dry-run-51ea689"
+        }
+      },
+      {
+        "stage": "canary",
+        "status": "ok",
+        "at": "2026-08-17T11:05:31Z",
+        "detail": {
+          "summary": "dry-run://canary-not-deployed"
+        }
+      },
+      {
+        "stage": "monitor_window",
+        "status": "ok",
+        "at": "2026-08-17T11:05:36Z",
+        "detail": {
+          "summary": "canary healthy"
+        }
+      },
+      {
+        "stage": "promote",
+        "status": "ok",
+        "at": "2026-08-17T11:05:36Z",
+        "detail": {
+          "summary": "promoted:dry-run-51ea689 [DRY-RUN \u2014 no shipping credentials; nothing was deployed]"
+        }
+      }
+    ],
+    "started_at": "2026-08-17 10:57:13",
+    "finished_at": "2026-08-17T11:05:36Z"
+  }
+}

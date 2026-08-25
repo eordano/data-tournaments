@@ -1,0 +1,4 @@
+avatar-shape-nre
+texture-retry-loop
+chat-history-oob
+emote-wheel-stuck

@@ -1,0 +1,19 @@
+{
+  "validation_id": 3,
+  "tested_sha": "0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+  "passed": true,
+  "status": "validated",
+  "log_digest": "517372a78ed599fc34ad144796fc509e0d79fbb982b2af4541b4607a9aafb729",
+  "red": [
+    2,
+    2
+  ],
+  "green": [
+    3,
+    3
+  ],
+  "guard": [
+    2,
+    2
+  ]
+}

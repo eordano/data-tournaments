@@ -1,0 +1,85 @@
+{
+  "id": 1,
+  "finding_id": 1,
+  "workorder_ref": "retry-carried-deadline",
+  "repo_path": "/private/tmp/bfl-repo",
+  "branch_name": "fix/retry-deadline-reset",
+  "base_sha": "5ea984ada3f69aac0fd6328a6aa6b466a8198ee0",
+  "head_sha": "0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+  "patch_digest": "c69a569617072058979c74738802b81c51cd0c1fe194194fa4f2a4d1823bb4e0",
+  "status": "approved",
+  "created_at": "2026-08-17 12:08:21",
+  "updated_at": "2026-08-17 12:12:22",
+  "validations": [
+    {
+      "id": 1,
+      "fix_branch_id": 1,
+      "tested_sha": "fcab9af9c0be7ff331f700c4e1134bef0150e43e",
+      "red_cmd": "./red.sh",
+      "red_intended": 2,
+      "red_observed": 2,
+      "green_cmd": "./green.sh",
+      "green_total": 3,
+      "green_passed": 3,
+      "guard_total": 2,
+      "guard_passed": 2,
+      "passed": 1,
+      "log_digest": "517372a78ed599fc34ad144796fc509e0d79fbb982b2af4541b4607a9aafb729",
+      "created_at": "2026-08-17 12:08:23"
+    },
+    {
+      "id": 3,
+      "fix_branch_id": 1,
+      "tested_sha": "0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+      "red_cmd": "./red.sh",
+      "red_intended": 2,
+      "red_observed": 2,
+      "green_cmd": "./green.sh",
+      "green_total": 3,
+      "green_passed": 3,
+      "guard_total": 2,
+      "guard_passed": 2,
+      "passed": 1,
+      "log_digest": "517372a78ed599fc34ad144796fc509e0d79fbb982b2af4541b4607a9aafb729",
+      "created_at": "2026-08-17 12:11:33"
+    }
+  ],
+  "reviews": [
+    {
+      "id": 1,
+      "fix_branch_id": 1,
+      "tested_sha": "fcab9af9c0be7ff331f700c4e1134bef0150e43e",
+      "reviewer": "esteban",
+      "decision": "approve",
+      "rationale": "RED 2/2 GREEN 3/3 GUARD 2/2 at current head; per-attempt deadline from config + abort logging satisfies rule retry-paths-log-and-guard v1.",
+      "approval_event_id": 1,
+      "created_at": "2026-08-17 12:08:58"
+    },
+    {
+      "id": 2,
+      "fix_branch_id": 1,
+      "tested_sha": "0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+      "reviewer": "esteban",
+      "decision": "approve",
+      "rationale": "Re-validated at new head 0f4b6bf3df94 after post-approval change: RED 2/2 GREEN 3/3 GUARD 2/2. Approving the exact tested SHA.",
+      "approval_event_id": 2,
+      "created_at": "2026-08-17 12:12:22"
+    }
+  ],
+  "current_validation": {
+    "id": 3,
+    "fix_branch_id": 1,
+    "tested_sha": "0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
+    "red_cmd": "./red.sh",
+    "red_intended": 2,
+    "red_observed": 2,
+    "green_cmd": "./green.sh",
+    "green_total": 3,
+    "green_passed": 3,
+    "guard_total": 2,
+    "guard_passed": 2,
+    "passed": 1,
+    "log_digest": "517372a78ed599fc34ad144796fc509e0d79fbb982b2af4541b4607a9aafb729",
+    "created_at": "2026-08-17 12:11:33"
+  }
+}

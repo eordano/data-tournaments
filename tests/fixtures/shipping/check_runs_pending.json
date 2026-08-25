@@ -1,0 +1,7 @@
+{
+  "total_count": 2,
+  "check_runs": [
+    {"name": "unit-tests", "status": "completed", "conclusion": "success"},
+    {"name": "playmode-tests", "status": "in_progress", "conclusion": null}
+  ]
+}

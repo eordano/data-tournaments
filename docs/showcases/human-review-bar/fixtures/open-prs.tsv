@@ -1,0 +1,2 @@
+pr	title	head
+9911	Rework ban dialog copy (does NOT fix timestamp parsing)	feature/ban-dialog-copy

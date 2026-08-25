@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q --strict-markers"
+markers = [
+  "live: hits real langfuse.example and llm.example — requires creds in .env",
+  "slow: takes >5s",
+]
+asyncio_mode = "auto"

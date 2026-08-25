@@ -1,0 +1,45 @@
+{
+  "campaign": "hrb-showcase",
+  "kind": "bugsweep",
+  "status": "active",
+  "base_commit": "609ea21",
+  "findings": [
+    {
+      "slug": "expl-3977-nullreferenceexception-in-bantimeformatter-2da1b326",
+      "source": "sentry-csv",
+      "state": "investigating",
+      "root_cause": "FormatRemaining falls through to raw string when expiresAt is not RFC3339",
+      "review": "CONFIRM \u00d71",
+      "validation": "\u2014"
+    },
+    {
+      "slug": "expl-4102-releaseretryservice-execute-timeout-01b53eb8",
+      "source": "sentry-csv",
+      "state": "confirmed_validated",
+      "root_cause": "Attempt-1 timeout token is cloned into the retry target; attempt 2 aborts instantly and unlogged",
+      "review": "CONFIRM \u00d72 + REFUTE\u2192repaired",
+      "validation": "RED 3/3 GREEN 5/5 + 2 guards"
+    },
+    {
+      "slug": "slack-bug-reporting-ts-1755203700-6c187ffd",
+      "source": "slack-csv",
+      "state": "no_go (stale-signal)",
+      "root_cause": "",
+      "review": "\u2014",
+      "validation": "\u2014"
+    },
+    {
+      "slug": "slack-bug-reporting-ts-1755290100-924b2603",
+      "source": "slack-csv",
+      "state": "no_go (stale-signal)",
+      "root_cause": "",
+      "review": "\u2014",
+      "validation": "\u2014"
+    }
+  ],
+  "counts": {
+    "confirmed_validated": 1,
+    "investigating": 1,
+    "no_go": 2
+  }
+}

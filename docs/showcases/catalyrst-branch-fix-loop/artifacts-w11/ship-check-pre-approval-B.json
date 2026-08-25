@@ -1,0 +1,21 @@
+{
+  "fix_branch_id": 2,
+  "status": "failed",
+  "head_sha": "445abc9950bd13f7d501623e22a21950f2e2cb19",
+  "repo_path": "/private/tmp/catalyrst-wave11",
+  "branch_name": "fix/w11-cid-min-length",
+  "gates": {
+    "head-current": true,
+    "status-approved": false,
+    "approval-current": false,
+    "validation-passed": false,
+    "no-ship-in-progress": true,
+    "approval-fresh": false
+  },
+  "ship_allowed": false,
+  "refusal_reason": "failed",
+  "approved_sha": null,
+  "approval_review_id": null,
+  "validation_id": 2,
+  "last_ship": null
+}

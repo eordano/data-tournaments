@@ -1,0 +1,13 @@
+{
+  "created": [
+    "cata-2201-content-upload-rejected-24d253c6",
+    "cata-2214-snapshot-fetch-loop-62a619ed",
+    "cata-2230-deploy-remote-entity-f2b018b7"
+  ],
+  "deduped": [],
+  "skipped_existing": [],
+  "evidence_count": 3,
+  "per_source": {
+    "sentry-cid": 3
+  }
+}

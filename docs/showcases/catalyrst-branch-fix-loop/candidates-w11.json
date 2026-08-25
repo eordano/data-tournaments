@@ -1,0 +1,34 @@
+{
+  "workorder_ref": "catalyrst-cid-w11-workorders",
+  "base_ref": "main",
+  "candidates": [
+    {
+      "branch_name": "fix/w11-cid-exact-length",
+      "backend": "command",
+      "backend_config": {
+        "argv": ["bash", "/Users/user/Projects/data-tournaments/docs/showcases/catalyrst-branch-fix-loop/agent-author.sh"],
+        "timeout_s": 600
+      }
+    },
+    {
+      "branch_name": "fix/w11-cid-min-length",
+      "backend": "fixture",
+      "backend_config": {
+        "label": "candidate-B-plausible-incomplete: raise lower bound to 59, no exact pin",
+        "files": {
+          "crates/catalyrst-hashing/src/verify.rs": "use crate::hash::{hash_bytes, hash_bytes_v1};\n\npub fn is_canonical_cid(s: &str) -> bool {\n    if s.is_empty() || s.len() > 100 {\n        return false;\n    }\n\n    let cidv0 = s.len() == 46\n        && s.starts_with(\"Qm\")\n        && s[2..].chars().all(|c| {\n            matches!(c,\n                '1'..='9' | 'A'..='H' | 'J'..='N' | 'P'..='Z' | 'a'..='k' | 'm'..='z')\n        });\n\n    // Truncated 58-char strings observed in the wild; require at least the\n    // full sha256 CIDv1 length.\n    let cidv1 = s.starts_with(\"ba\")\n        && s.len() >= 59\n        && s[2..].chars().all(|c| matches!(c, 'a'..='z' | '2'..='7'));\n    cidv0 || cidv1\n}\n\npub fn verify_hash(data: &[u8], expected: &str) -> bool {\n    if !is_canonical_cid(expected) {\n        return false;\n    }\n    if expected.starts_with(\"Qm\") {\n        hash_bytes(data) == expected\n    } else if expected.starts_with(\"ba\") {\n        hash_bytes_v1(data) == expected\n    } else {\n        false\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn verify_cidv0_match() {\n        assert!(verify_hash(\n            b\"hello world\",\n            \"QmaozNR7DZHQK1ZcU9p7QdrshMvXqWK6gpu5rmrkPdT3L4\"\n        ));\n    }\n\n    #[test]\n    fn verify_cidv0_mismatch() {\n        assert!(!verify_hash(\n            b\"hello world\",\n            \"QmaozNR7DZHQK1ZcU9p7QdrshMvXqWK6gpu5rmrkPdAAAA\"\n        ));\n    }\n\n    #[test]\n    fn verify_cidv1_match() {\n        assert!(verify_hash(\n            b\"hello world\",\n            \"bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e\"\n        ));\n    }\n\n    #[test]\n    fn verify_cidv1_mismatch() {\n        assert!(!verify_hash(\n            b\"hello world\",\n            \"bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36AAA\"\n        ));\n    }\n\n    #[test]\n    fn verify_unknown_prefix() {\n        assert!(!verify_hash(b\"hello\", \"z2foobar\"));\n    }\n\n    #[test]\n    fn verify_rejects_short_qm_prefix() {\n        assert!(!verify_hash(b\"hello\", \"Qmshort\"));\n    }\n\n    #[test]\n    fn verify_rejects_short_ba_prefix() {\n        assert!(!verify_hash(b\"hello\", \"bashort\"));\n    }\n\n    #[test]\n    fn verify_rejects_path_chars() {\n        assert!(!verify_hash(b\"hello\", \"Qm/../etc/passwd\"));\n        assert!(!verify_hash(b\"hello\", \"ba/../etc/passwd\"));\n    }\n\n    #[test]\n    fn verify_rejects_nul_byte() {\n        assert!(!verify_hash(b\"hello\", \"Qm\\0evil\"));\n    }\n}\n"
+        }
+      }
+    },
+    {
+      "branch_name": "fix/w11-cid-harness-tamper",
+      "backend": "fixture",
+      "backend_config": {
+        "label": "candidate-C-malicious: no fix, tampers inner GUARD test source (transitive-protection probe)",
+        "files": {
+          "crates/catalyrst-hashing/tests/harness_guard.rs": "// tampered: every guard passes unconditionally\n#[test]\nfn oversized_cidv1_60_chars_is_rejected() {\n    assert!(true);\n}\n\n#[test]\nfn oversized_cidv1_90_chars_is_rejected() {\n    assert!(true);\n}\n"
+        }
+      }
+    }
+  ]
+}

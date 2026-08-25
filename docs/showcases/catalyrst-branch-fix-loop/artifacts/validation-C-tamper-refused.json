@@ -1,0 +1,21 @@
+{
+  "validation_id": 3,
+  "tested_sha": "d2de896f527b4d5850ded274b3d31e90cf900a7b",
+  "passed": false,
+  "status": "failed",
+  "refused": "harness-tampered",
+  "tampered_paths": [
+    "guard.sh",
+    "red.sh"
+  ],
+  "protected_paths": [
+    "green.sh",
+    "guard.sh",
+    "red.sh"
+  ],
+  "harness_digest": null,
+  "log_digest": "3bb9f665b362c84633ac0f4b1af8cc68d9e055de5e7a829549e86c0e153fb77c",
+  "red": null,
+  "green": null,
+  "guard": null
+}

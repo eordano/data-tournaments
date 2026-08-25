@@ -1,0 +1,26 @@
+[
+  {
+    "fix_branch_id": 1,
+    "authoring_id": 1,
+    "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
+    "head_sha": "REDACTED",
+    "patch_digest": "b06e6c21b13e08bf4cad9f198ec7b4567597434045622b39dcc742051510485f",
+    "backend": "fixture"
+  },
+  {
+    "fix_branch_id": 2,
+    "authoring_id": 2,
+    "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
+    "head_sha": "e47f9e2bc9e5cba053d0d2cd6c484239bf26c206",
+    "patch_digest": "127a80d39818735983928d2a3e37dbfba0f5f1c69c431280fbbab51d42506838",
+    "backend": "fixture"
+  },
+  {
+    "fix_branch_id": 3,
+    "authoring_id": 3,
+    "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
+    "head_sha": "d2de896f527b4d5850ded274b3d31e90cf900a7b",
+    "patch_digest": "5ab9e515b58a6dff58724962be80d8a205bf61eba4b78250df344508041d1b85",
+    "backend": "fixture"
+  }
+]

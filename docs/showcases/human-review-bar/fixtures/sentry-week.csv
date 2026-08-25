@@ -1,0 +1,3 @@
+short_id,title,culprit,permalink,level,substatus,count_week,count_lifetime,users_week,last_seen
+EXPL-4102,ReleaseRetryService.Execute timeout after 30000ms,ReleaseRetryService.Execute(retryCount),https://sentry.example.org/organizations/showcase/issues/EXPL-4102/,error,escalating,143,1287,58,2026-08-15T09:14:00Z
+EXPL-3977,NullReferenceException in BanTimeFormatter.FormatRemaining,BanTimeFormatter.FormatRemaining(expiresAt),https://sentry.example.org/organizations/showcase/issues/EXPL-3977/,error,ongoing,31,402,12,2026-08-14T22:41:00Z

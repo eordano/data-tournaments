@@ -1,0 +1,6 @@
+ts,user,text,replies
+1755290100.000200,U0SHOWCASE1,"TITLE: Release retry silently fails after first timeout
+STR: 1. Start a release from the launcher 2. Let the first attempt time out 3. Watch the retry counter
+REPRODUCTION INDEX: 3/3 on staging
+Retry claims to run but ReleaseRetryService bails on the cloned target without logging. Users think the release shipped; it never did.",7
+1755203700.000200,U0SHOWCASE2,"Ban screen shows raw ISO timestamp when expiresAt fails to parse — saw it again on 2026-08-13, same as the June report.",2

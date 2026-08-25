@@ -1,0 +1,9 @@
+# Spike-local artifacts — never commit.
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+nohup.out
+*.log
+# temporal server start-dev state, if ever run with a db file here
+*.db

@@ -1,0 +1,143 @@
+{
+  "walkthrough": "catalyrst-branch-fix-loop",
+  "mandate": "team of engineers automating bugfixes; user-devs at the END of the loop; every branch validated ALONE (never merged aggregates)",
+  "artifact": "https://claude.ai/code/artifact/1c5679a7-a496-46a8-91e9-eb97228358f6",
+  "target_repo": {
+    "remote": "https://github.com/eordano/catalyrst",
+    "upstream_sha": "009d0fe5dbce2689b1946a64a196a8a9e3bf99d8",
+    "campaign_base": "42b4717af8214597822c8795eb93364bd1cdccb7",
+    "clone": "/tmp/catalyrst-e2e"
+  },
+  "platform_head_at_run": "b0310b4fffc8e7b59c58f6ec9c928c6420642ac4",
+  "defect": "is_canonical_cid: cidv1 arm accepts len>=58; every sha256 CIDv1 this crate produces is exactly 59 chars \u2014 truncated/oversized strings pass validation then fail verify_hash downstream",
+  "lineage": {
+    "intake": {
+      "findings": [
+        "cata-2201-content-upload-rejected-24d253c6",
+        "cata-2214-snapshot-fetch-loop-62a619ed",
+        "cata-2230-deploy-remote-entity-f2b018b7"
+      ],
+      "evidence_refs": 3
+    },
+    "dossier": [
+      {
+        "slug": "cata-2201-content-upload-rejected-24d253c6",
+        "state": "confirmed_validated"
+      },
+      {
+        "slug": "cata-2214-snapshot-fetch-loop-62a619ed",
+        "state": "candidate"
+      },
+      {
+        "slug": "cata-2230-deploy-remote-entity-f2b018b7",
+        "state": "candidate"
+      }
+    ],
+    "workorders": {
+      "generated": 2,
+      "pairs_enqueued": 1,
+      "judged_pairs": 1
+    }
+  },
+  "branches": [
+    {
+      "id": 1,
+      "branch_name": "fix/cidv1-exact-length",
+      "status": "shipped",
+      "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
+      "head_sha": "8c329d02aac36efabe4267b4b312fd5cd7e8c144",
+      "patch_digest": "c0a4d07a41aaf3155247f96251611d3f5962f77db885eb93ccc39f5017adb528"
+    },
+    {
+      "id": 2,
+      "branch_name": "fix/cidv1-min-length-59",
+      "status": "failed",
+      "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
+      "head_sha": "e47f9e2bc9e5cba053d0d2cd6c484239bf26c206",
+      "patch_digest": "127a80d39818735983928d2a3e37dbfba0f5f1c69c431280fbbab51d42506838"
+    },
+    {
+      "id": 3,
+      "branch_name": "fix/cidv1-harness-tamper",
+      "status": "failed",
+      "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
+      "head_sha": "d2de896f527b4d5850ded274b3d31e90cf900a7b",
+      "patch_digest": "5ab9e515b58a6dff58724962be80d8a205bf61eba4b78250df344508041d1b85"
+    }
+  ],
+  "merge_commits_per_branch": {
+    "fix/cidv1-exact-length": 0,
+    "fix/cidv1-min-length-59": 0,
+    "fix/cidv1-harness-tamper": 0
+  },
+  "same_base_invariant": true,
+  "reviews": [
+    {
+      "id": 1,
+      "fix_branch_id": 1,
+      "tested_sha": "99f367c6a8dd50a63599b854217b18b495af2d6a",
+      "reviewer": "esteban",
+      "decision": "approve",
+      "approval_event_id": 1
+    },
+    {
+      "id": 2,
+      "fix_branch_id": 1,
+      "tested_sha": "8c329d02aac36efabe4267b4b312fd5cd7e8c144",
+      "reviewer": "esteban",
+      "decision": "approve",
+      "approval_event_id": 2
+    }
+  ],
+  "audit_events": [
+    {
+      "id": 1,
+      "temporal_workflow_id": "branchfix:fix/cidv1-exact-length:99f367c6a8dd",
+      "decision": "approved",
+      "approver": "esteban"
+    },
+    {
+      "id": 2,
+      "temporal_workflow_id": "branchfix:fix/cidv1-exact-length:8c329d02aac3",
+      "decision": "approved",
+      "approver": "esteban"
+    },
+    {
+      "id": 3,
+      "temporal_workflow_id": "release:catalyrst-e2e:8c329d02aac36efabeREDACTED",
+      "decision": "approved",
+      "approver": "esteban"
+    }
+  ],
+  "workflow_runs": [
+    {
+      "temporal_workflow_id": "release:catalyrst-e2e:8c329d02aac36efabe4267b4b312fd5cd7e8c144",
+      "status": "done"
+    }
+  ],
+  "authoring_provenance": [
+    {
+      "fix_branch_id": 1,
+      "backend": "fixture",
+      "workorder_ref": "catalyrst-cidv1-length-pinning",
+      "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
+      "head_sha": "REDACTED"
+    },
+    {
+      "fix_branch_id": 2,
+      "backend": "fixture",
+      "workorder_ref": "catalyrst-cidv1-length-pinning",
+      "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
+      "head_sha": "REDACTED"
+    },
+    {
+      "fix_branch_id": 3,
+      "backend": "fixture",
+      "workorder_ref": "catalyrst-cidv1-length-pinning",
+      "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
+      "head_sha": "d2de896f527b4d5850ded274b3d31e90cf900a7b"
+    }
+  ],
+  "final_stage": "promoted",
+  "promote_label": "promoted:dry-run-8c329d02 [DRY-RUN \u2014 no shipping credentials; nothing was deployed]"
+}

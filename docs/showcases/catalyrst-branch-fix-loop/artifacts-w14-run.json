@@ -1,0 +1,49 @@
+{
+  "wave": 14,
+  "status_vocabulary": "REAL LOCAL \u2014 supervisor + bound registry; pipeline execution remains per-stage tools (spec, not engine); ship path DRY-RUN until credentials",
+  "captured_at": "2026-08-18T14:26:47",
+  "stack": [
+    {
+      "component": "temporal",
+      "pid": null,
+      "port": "7233",
+      "healthy": true
+    },
+    {
+      "component": "worker",
+      "pid": 39314,
+      "port": "-",
+      "healthy": true
+    },
+    {
+      "component": "ui",
+      "pid": 36534,
+      "port": "4113",
+      "healthy": true
+    }
+  ],
+  "ui": "http://localhost:4113",
+  "binding": {
+    "domain": "catalyrst-ops",
+    "pipeline": "branch-fix-review",
+    "version": 1,
+    "definition_digest": "9139f4d5ef63e7cb9071f862f754ac39cb68c9fa3984a2e36f16a987b4190f8c"
+  },
+  "templates_seeded": [
+    "card-prioritizer-v0",
+    "pair-idea-wheel-v1",
+    "pair-wheel-v1",
+    "single-execution-v1",
+    "single-idea-v1"
+  ],
+  "surfaces_200": [
+    "/",
+    "/environment?tab=pipelines",
+    "/environment?tab=rubrics",
+    "/judge?domain=catalyrst-ops",
+    "/branch-fixes",
+    "/runs",
+    "/results",
+    "/campaigns"
+  ]
+}

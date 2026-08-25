@@ -1,0 +1,58 @@
+#!/usr/sbin/nft -f
+# Deny-by-default egress for data-tournaments sandbox guests (wave 5).
+# Research basis: docs/research/sandbox-execution-options-2026.md §Recommendation.
+#
+# Topology: each microVM guest gets a tap interface (vm-dtsbx*) enslaved to
+# bridge br-sandbox. This ruleset governs FORWARDING from that bridge —
+# guests can reach ONLY the named destinations; everything else (including
+# DNS to arbitrary resolvers) is dropped and logged.
+#
+# Adjust: interface/bridge names, proxy address, cache addresses per host.
+
+table inet dt_sandbox {
+  # Destinations guests may reach directly. Everything else must go through
+  # the egress proxy (which enforces domain-level allowlists and performs
+  # placeholder secret substitution — plaintext never enters the guest).
+  set allowed_direct_v4 {
+    type ipv4_addr
+    flags interval
+    elements = {
+      10.100.0.1/32       # host-side bridge address: egress proxy + DNS stub
+    }
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy accept;
+
+    # Only govern traffic originating from sandbox guests.
+    iifname "br-sandbox" jump sandbox_egress
+  }
+
+  chain sandbox_egress {
+    # Established return traffic for allowed flows.
+    ct state established,related accept
+
+    # DNS ONLY via the host stub resolver (which itself resolves through
+    # the proxy's allowlist). Direct 53/853/443-DoH to the internet: dropped.
+    ip daddr @allowed_direct_v4 udp dport 53 accept
+    ip daddr @allowed_direct_v4 tcp dport 53 accept
+
+    # Egress proxy (CONNECT-style, domain allowlist + secret substitution).
+    ip daddr @allowed_direct_v4 tcp dport 3128 accept
+
+    # Everything else from guests: log then drop. The log line is the
+    # audit trail for exfiltration attempts and misconfigured tools.
+    log prefix "dt-sandbox-drop " group 0
+    counter drop
+  }
+}
+
+# Proxy-level allowlist (enforced in the proxy config, documented here):
+#   cache.nixos.org           - Nix binary cache (guest store is host-ro;
+#                               kept for runner-side fetches)
+#   github.com, codeload.github.com, api.github.com
+#                             - pinned-repo fetch + release metadata
+#   <llm-endpoint>            - only for profiles that explicitly allow it
+# Secret substitution: requests to allowlisted hosts may carry
+# X-DT-Secret-Ref headers; the proxy replaces them with resolved values.
+# Guests never see the values (Daytona placeholder pattern).

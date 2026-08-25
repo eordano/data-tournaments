@@ -1,0 +1,51 @@
+{
+  "workflow_id": "release:catalyrst-e2e:8c329d02aac36efabe4267b4b312fd5cd7e8c144",
+  "current_stage": "promoted",
+  "stage_results": [
+    {
+      "stage": "assemble_context",
+      "status": "ok",
+      "detail": "assembly failed for project 'catalyrst' (no evidence collected for project 'catalyrst': 0 source(s) skipped (none configured)) \u2014 fell back to canned spike data"
+    },
+    {
+      "stage": "generate_workorders",
+      "status": "ok",
+      "detail": "stub: no generation domain configured on the request"
+    },
+    {
+      "stage": "judging_gate",
+      "status": "ok",
+      "detail": "score=1.0"
+    },
+    {
+      "stage": "approval",
+      "status": "ok",
+      "detail": "approved by esteban"
+    },
+    {
+      "stage": "sandbox_preflight",
+      "status": "ok",
+      "detail": "preflight-ok"
+    },
+    {
+      "stage": "build",
+      "status": "ok",
+      "detail": "dry-run-8c329d02"
+    },
+    {
+      "stage": "canary",
+      "status": "ok",
+      "detail": "dry-run://canary-not-deployed"
+    },
+    {
+      "stage": "monitor_window",
+      "status": "ok",
+      "detail": "canary healthy"
+    },
+    {
+      "stage": "promote",
+      "status": "ok",
+      "detail": "promoted:dry-run-8c329d02 [DRY-RUN \u2014 no shipping credentials; nothing was deployed]"
+    }
+  ]
+}
