@@ -1,16 +1,16 @@
 # The Bugsweep Product Model — what the August DCL campaigns actually did
 
-Audit A2 of Wave 8 (docs/plans/wave-8-shipping-tool.md). Source: `corpus/dcl-bugsweeps-2026-08/`
+Audit A2 of Wave 8 (docs/plans/wave-8-shipping-tool.md). Source: `corpus/bugsweeps-2026-08/`
 (user's private data, TIER3, read-only). This document extracts the *product model* of the two
 hand-run August 2026 bug-sweep campaigns against decentraland/unity-explorer — the yardstick the
 platform must match. Evidence lines cite corpus paths; corpus content was quoted sparingly and
 anything token-like was left out.
 
 **Corpus caveat:** `.claude/skills/bug-campaign` is a **dangling symlink** (→
-`/home/user/workspaces/one-main-ro/rig/skills/bug-campaign`, 0 bytes locally). The skill that
+an external skills checkout not vendored here; 0 bytes locally). The skill that
 drove the campaigns was NOT readable for this audit; its behavior is reconstructed from the
-artifacts it produced and targeted greps of the `69ba4389` session transcript. Re-copy from the
-dcl host remains pending (also flagged in the wave-8 charter).
+artifacts it produced and targeted greps of the `<redacted>` session transcript. The
+source-host re-copy remains pending (also flagged in the wave-8 charter).
 
 **Campaign outcomes (the bar):**
 
@@ -104,7 +104,7 @@ with distinct follow-up semantics.
 
 Three named adversarial lenses, each an independent reviewer prompted to **REFUTE** the fix —
 "CONFIRM only if you genuinely cannot" — with REFUTE requiring "a concrete failure scenario,
-not vibes" (verbatim prompt fragments from the 69ba4389 transcript):
+not vibes" (verbatim prompt fragments from the <redacted> transcript):
 
 1. **root-cause** — "Is this the true root cause or a symptom patch? Does it meet the upstream
    review bar: no null-check/swallow workarounds, correct lifecycle owner, no parallel
@@ -307,8 +307,8 @@ taxonomy; pr-draft; blocker/exception escalation state; hand-off artifact.
 - **[written]/[unwritten]** — whether the org's style guide states it, with pointer nuance
   ("[unwritten — CLAUDE.md]", "[partially written: only the DTO section]", "[union types
   written in architecture-overview.md:267, not the style guide]").
-- **Top enforcers** — named humans per rule ("Top enforcers: mikhail-dcl, nickkhalow; also
-  lorux0, dalkia, …").
+- **Top enforcers** — named humans per rule ("Top enforcers: reviewer-A, reviewer-B; also
+  reviewer-C, reviewer-D, …").
 - **Verbatim quotes + links** — 2–3 per rule, each attributed and linked to the forge mirror
   issue view; 7 quotes were spot-checked verbatim against raw dumps ("Digests are trustworthy").
 - **Scope carve-outs** — inline ("Explicitly waved off only in CI-only/test-only paths",
@@ -322,8 +322,8 @@ taxonomy; pr-draft; blocker/exception escalation state; hand-off artifact.
 
 - **CONTRIBUTOR-PROFILES.md** — per-reviewer models: volume, focus areas, style, *blocks-on vs
   nits* split, distinctive rules only they enforce, and a "pre-empt" playbook per reviewer. It
-  also preserves **minority/counter opinions**: dalkia's "don't defend against impossible
-  states" counter-rule; ansismalins demanding evidence for the ConcurrentDictionary ban; popuz's
+  also preserves **minority/counter opinions**: reviewer-D's "don't defend against impossible
+  states" counter-rule; reviewer-E demanding evidence for the ConcurrentDictionary ban; reviewer-F's
   data-driven refusals. This is the attribution + dissent layer.
 - **ANALYZER-CANDIDATES.md** — the **mechanizability triage**: each rule facet classified
   ALREADY-COVERED (5 Roslyn + 11 regex mappings), REGEX-CANDIDATE (8, each with pattern,
@@ -482,7 +482,7 @@ Lifecycle semantics grounded in the corpus:
   github-issues-index; review-rules-aug16 REVIEW-RULES/ANALYZER-CANDIDATES/CONTRIBUTOR-PROFILES/
   SKILL-DELTA. Headers only (3 lines): sentry-week.csv, slack-bugs.csv, autoclosed.csv,
   open-prs.tsv, inflight.tsv, prior-campaign-slugs.txt, issues.tsv; notion-playbook.txt first
-  20 lines (nav chrome only). Targeted greps only (never bulk-loaded) of the 69ba4389 session
+  20 lines (nav chrome only). Targeted greps only (never bulk-loaded) of the <redacted> session
   JSONL for the lens prompts, the repair-loop control flow, and worktree commands.
 - The bug-campaign skill was NOT read (dangling symlink) — its logic here is reconstructed
   from artifacts and transcript fragments and should be re-verified when the skill is re-copied.

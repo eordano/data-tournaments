@@ -69,7 +69,6 @@ from bin import fix_branches  # noqa: E402
 DEFAULT_CLIENT_CMD = "python3 -m bin.release_workflow.client"
 CLIENT_CMD_ENV = "BRANCH_SHIP_CLIENT_CMD"
 
-
 class ShipRefused(Exception):
     """The gateway refused to ship. ``.reason`` is a machine-readable code:
     'stale' | 'failed' | 'rejected' | 'already-shipped' | 'not-approved' |
@@ -81,18 +80,12 @@ class ShipRefused(Exception):
         self.detail = detail
         super().__init__(f"[{reason}] {detail}")
 
-
 class ShipClientError(Exception):
     """The release client exited nonzero — the ship did NOT happen."""
-
-
-# ── Gate evaluation (shared by ship_branch and refusal_matrix) ────────────
-
 
 def _latest_approval(branch: dict) -> Optional[dict]:
     approvals = [r for r in branch["reviews"] if r["decision"] == "approve"]
     return approvals[-1] if approvals else None
-
 
 def _evaluate(fix_branch_id: int) -> dict:
     """Refresh the head FIRST (a moved tip must be seen, not assumed),
@@ -105,10 +98,6 @@ def _evaluate(fix_branch_id: int) -> dict:
     cv = branch["current_validation"]
     last_ship = fix_branches.latest_ship(fix_branch_id)
 
-    # Freshness vs the last ship record (re-ship semantics, wave-11 W2):
-    # after a rollback, the OLD approval/validation that already shipped
-    # may never ship again — both must be NEWER rows than the ones the
-    # last ship consumed.
     approval_fresh = approval is not None and (
         last_ship is None
         or (last_ship["approval_review_id"] is not None
@@ -149,8 +138,6 @@ def _evaluate(fix_branch_id: int) -> dict:
     elif not gates["validation-passed"]:
         reason = "no-passing-validation"
     elif not gates["approval-fresh"]:
-        # Approved-looking record, but the approval/validation predates the
-        # last ship (rolled-back release) — old evidence never re-ships.
         reason = "rolled-back"
 
     return {
@@ -168,14 +155,9 @@ def _evaluate(fix_branch_id: int) -> dict:
         "last_ship": last_ship,
     }
 
-
 def refusal_matrix(fix_branch_id: int) -> dict:
     """Every ship gate with its current pass/fail (evidence package)."""
     return _evaluate(fix_branch_id)
-
-
-# ── Canonical repo identity ───────────────────────────────────────────────
-
 
 def _repo_name_from_origin_url(url: str) -> Optional[str]:
     """'<org>/<repo>' parsed from a git remote URL, else None.
@@ -186,11 +168,9 @@ def _repo_name_from_origin_url(url: str) -> Optional[str]:
     url = url.strip()
     if not url:
         return None
-    # scp-like: git@host:org/repo(.git) — no scheme, single ':' separator.
     if "://" not in url and ":" in url:
         url = url.split(":", 1)[1]
     else:
-        # strip scheme://host
         if "://" in url:
             rest = url.split("://", 1)[1]
             url = rest.split("/", 1)[1] if "/" in rest else ""
@@ -201,7 +181,6 @@ def _repo_name_from_origin_url(url: str) -> Optional[str]:
     if len(parts) >= 2:
         return "/".join(parts[-2:])
     return None
-
 
 def derive_repo_name(repo_path: str) -> str:
     """Canonical repo identity: '<org>/<repo>' from the 'origin' remote URL
@@ -219,10 +198,6 @@ def derive_repo_name(repo_path: str) -> str:
         if parsed:
             return parsed
     return Path(repo_path).name
-
-
-# ── The gateway ───────────────────────────────────────────────────────────
-
 
 def ship_branch(
     fix_branch_id: int,
@@ -254,7 +229,6 @@ def ship_branch(
             f"{ev['gates']}",
         )
 
-    # Derived — the ONLY source of repo/commit is the branch record.
     repo = repo_name or derive_repo_name(ev["repo_path"])
     head_sha = ev["head_sha"]
 
@@ -282,7 +256,6 @@ def ship_branch(
             f"{output.strip()}"
         )
 
-    # The client prints 'started <workflow_id>'.
     workflow_id = None
     for line in output.splitlines():
         if line.startswith("started "):
@@ -290,9 +263,6 @@ def ship_branch(
     if workflow_id is None:
         workflow_id = f"release:{repo}:{head_sha}"
 
-    # 'shipping' + an immutable ship row recording the started workflow —
-    # the same approval cannot ship twice, and 'shipped' now means the
-    # release COMPLETED (sync_completion projects the outcome).
     ship_id = fix_branches.mark_shipping(
         fix_branch_id,
         workflow_id=workflow_id,
@@ -310,10 +280,6 @@ def ship_branch(
         "argv": argv,
         "output": output,
     }
-
-
-# ── Completion projection (wave-11 W2) ────────────────────────────────────
-
 
 def sync_completion(fix_branch_id: int) -> dict:
     """Project the recorded release workflow's outcome onto the branch.
@@ -351,7 +317,7 @@ def sync_completion(fix_branch_id: int) -> dict:
             "workflow_id": workflow_id,
             "changed": False,
         }
-    run_status = runs[0]["status"]  # newest run for this workflow id
+    run_status = runs[0]["status"]
 
     outcome = {"done": "shipped", "rolled-back": "rolled-back"}.get(run_status)
     changed = False
@@ -366,10 +332,6 @@ def sync_completion(fix_branch_id: int) -> dict:
         "fix_branch_status": fix_branches.get_branch(fix_branch_id)["status"],
         "changed": changed,
     }
-
-
-# ── CLI ───────────────────────────────────────────────────────────────────
-
 
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(
@@ -426,7 +388,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     except ShipClientError as exc:
         _print({"error": str(exc)})
         return 2
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

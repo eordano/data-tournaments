@@ -6,22 +6,19 @@ import sys
 from playwright.sync_api import sync_playwright
 
 BASE = "http://localhost:4112"
-OUT = "/Users/user/Projects/data-tournaments/docs/showcases/catalyrst-branch-fix-loop/shots-w13"
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots-w13")
 os.makedirs(OUT, exist_ok=True)
 fails = []
-
 
 def shot(page, name):
     p = f"{OUT}/{name}.png"
     page.screenshot(path=p, full_page=True)
     print(name, "->", os.path.getsize(p))
 
-
 def check(cond, msg):
     if not cond:
         fails.append(msg)
         print("FAIL:", msg)
-
 
 with sync_playwright() as p:
     b = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
@@ -29,7 +26,6 @@ with sync_playwright() as p:
     page = ctx.new_page()
     page.set_viewport_size({"width": 1440, "height": 1100})
     try:
-        # 1. /results — revise flow
         page.goto(BASE + "/results", wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(1500)
         shot(page, "01-results")
@@ -40,8 +36,6 @@ with sync_playwright() as p:
             revise.first.click()
             page.wait_for_timeout(800)
             shot(page, "02-results-revise-panel")
-            # pick a different verdict on the reused wheel
-            # revision panel reuses set_verdict with revise-verdict-* ids
             btn = page.locator("button[id^=revise-verdict-]")
             check(btn.count() >= 1, "no verdict buttons in revision panel")
             if btn.count() >= 1:
@@ -61,7 +55,6 @@ with sync_playwright() as p:
                         page.wait_for_timeout(2000)
                         shot(page, "03-results-revised")
 
-        # 2. /environment — all tabs
         for tab in ("sources", "prompts", "rubrics", "pipelines", "policies"):
             page.goto(f"{BASE}/environment?tab={tab}",
                       wait_until="networkidle", timeout=30000)
@@ -71,7 +64,6 @@ with sync_playwright() as p:
         check("approver" in body.lower() or "polic" in body.lower(),
               "policies tab missing expected content")
 
-        # redirects
         page.goto(BASE + "/catalog", wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(800)
         check("/environment" in page.url, f"/catalog landed on {page.url}")
@@ -79,14 +71,12 @@ with sync_playwright() as p:
         page.wait_for_timeout(800)
         check("/environment" in page.url, f"/prompts landed on {page.url}")
 
-        # 3. /brackets — legacy note, no nav entry
         page.goto(BASE + "/brackets", wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(800)
         body = page.inner_text("body")
         check("advanced" in body.lower(), "brackets missing advanced/legacy note")
         shot(page, "05-brackets-legacy")
 
-        # 4. campaign hub
         page.goto(BASE + "/campaigns/catalyrst-cid-w11",
                   wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(1200)
@@ -95,7 +85,6 @@ with sync_playwright() as p:
             check(needle in body.lower(), f"campaign hub missing section: {needle}")
         shot(page, "06-campaign-hub")
 
-        # 5. branch-fixes/3 — diff view + tamper banner
         page.goto(BASE + "/branch-fixes/3", wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(1200)
         body = page.inner_text("body")
@@ -105,13 +94,11 @@ with sync_playwright() as p:
         check(cards.count() >= 1, "no per-file diff cards on branch 3")
         shot(page, "07-branchfix3-diff")
 
-        # also the shipped branch 1 diff
         page.goto(BASE + "/branch-fixes/1", wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(1200)
         shot(page, "08-branchfix1-diff")
 
-        # 6. run timeline
-        page.goto(BASE + "/runs/show?id=release%3Aeordano%2Fcatalyrst%3A"
+        page.goto(BASE + "/runs/show?id=release%3AYOUR_ORG%2Fcatalyrst%3A"
                   "3d2b3b273c63191c8b20d74334e65a381ed8a992",
                   wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(1200)
@@ -121,7 +108,6 @@ with sync_playwright() as p:
               "run page missing raw JSON toggle")
         shot(page, "09-run-timeline")
 
-        # 7. judge — no aside, queue bar, wheel
         page.goto(BASE + "/judge?domain=catalyrst-cid-w11-workorders",
                   wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(1200)

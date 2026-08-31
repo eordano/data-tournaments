@@ -2,9 +2,9 @@
   "created": [],
   "deduped": [],
   "skipped_existing": [
-    "REDACTED",
-    "REDACTED",
-    "REDACTED"
+    "cata-2201-verify-hash-mismatch-24d253c6",
+    "cata-2214-snapshot-fetch-loop-62a619ed",
+    "cata-2230-deploy-remote-entity-f2b018b7"
   ],
   "evidence_count": 3,
   "per_source": {

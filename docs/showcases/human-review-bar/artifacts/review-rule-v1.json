@@ -17,7 +17,7 @@
         }
       ],
       "attribution": [
-        "esteban"
+        "changeme"
       ],
       "dissent": [
         {
@@ -26,7 +26,7 @@
         }
       ],
       "proposal_id": 1,
-      "approved_by": "esteban",
+      "approved_by": "changeme",
       "approval_event_id": 1,
       "supersedes": null,
       "created_at": "2026-08-17 10:56:12"
@@ -50,7 +50,7 @@
         }
       ],
       "attribution": [
-        "esteban"
+        "changeme"
       ],
       "dissent": [
         {
@@ -59,7 +59,7 @@
         }
       ],
       "proposal_id": 1,
-      "approved_by": "esteban",
+      "approved_by": "changeme",
       "approval_event_id": 1,
       "supersedes": null,
       "created_at": "2026-08-17 10:56:12"

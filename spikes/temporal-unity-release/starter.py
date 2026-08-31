@@ -21,7 +21,6 @@ from worker import TASK_QUEUE
 
 REPO = "decentraland/unity-explorer"
 
-
 async def main() -> None:
     commit = sys.argv[1] if len(sys.argv) > 1 else "deadbeefcafe0123"
     mode = sys.argv[2] if len(sys.argv) > 2 else "--approve"
@@ -32,7 +31,6 @@ async def main() -> None:
         repo=REPO,
         commit=commit,
         requested_by="starter.py",
-        # Short timers for the live demo; production uses the 24h/30m defaults.
         approval_timeout_seconds=60,
         monitor_window_seconds=2,
     )
@@ -65,7 +63,6 @@ async def main() -> None:
     print(f"\nterminal status: {result.status} — {result.reason}")
     for s in result.stages:
         print(f"  [{s.status:>6}] {s.stage}: {s.detail}")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-
 @dataclass
 class ReleaseRequest:
     """Input to UnityReleaseWorkflow. workflow_id = release:<repo>:<commit>."""
@@ -20,20 +19,16 @@ class ReleaseRequest:
     repo: str
     commit: str
     requested_by: str = "unknown"
-    # Durable-timer knobs (seconds) so tests / demos can shrink them.
-    # Production defaults: 24h approval window, 30min canary monitor window.
     approval_timeout_seconds: float = 24 * 3600
     monitor_window_seconds: float = 30 * 60
-
 
 @dataclass
 class StageResult:
     """One completed stage, accumulated on the workflow for audit/query."""
 
     stage: str
-    status: str  # "ok" | "failed" | "skipped"
+    status: str
     detail: str = ""
-
 
 @dataclass
 class ReleaseContext:
@@ -44,14 +39,12 @@ class ReleaseContext:
     changelog: list[str] = field(default_factory=list)
     open_incidents: int = 0
 
-
 @dataclass
 class WorkOrderBatch:
     """Output of generate_workorders."""
 
     work_order_ids: list[str] = field(default_factory=list)
     summary: str = ""
-
 
 @dataclass
 class JudgeVerdict:
@@ -61,7 +54,6 @@ class JudgeVerdict:
     score: float
     rationale: str = ""
 
-
 @dataclass
 class ApprovalDecision:
     """Payload of the human-approval Signal (sent from Phoenix/CLI)."""
@@ -70,14 +62,12 @@ class ApprovalDecision:
     approver: str
     reason: str = ""
 
-
 @dataclass
 class BuildInfo:
     """Output of build."""
 
     artifact_url: str
     build_id: str
-
 
 @dataclass
 class CanaryReport:
@@ -86,12 +76,11 @@ class CanaryReport:
     canary_url: str
     healthy: bool
 
-
 @dataclass
 class ReleaseResult:
     """Terminal workflow result."""
 
-    status: str  # "promoted" | "rolled_back"
+    status: str
     reason: str
     repo: str
     commit: str

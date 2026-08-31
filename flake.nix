@@ -37,30 +37,23 @@
             httpx
             dspy
             gepa
-            # bin/*.py import pydantic directly; today it arrives transitively
-            # via dspy — explicit is cheap insurance.
             pydantic
+            pyyaml
             pytest
             pytest-asyncio
           ]
         );
 
-        # Bundle bin/*.py + bin/*.sql as a single source dir on PYTHONPATH
-        # so `import judgement` works inside run-tournament.py regardless
-        # of how the orchestrator is invoked. Ships every file under bin/
-        # except shell scripts (those don't need to be on PYTHONPATH).
         binSrc = pkgs.runCommand "data-tournaments-bin" { } ''
           mkdir -p $out
           cp ${./bin/run-tournament.py} $out/run-tournament.py
           cp ${./bin/hermes_mcp_server.py} $out/hermes_mcp_server.py
           cp ${./bin/judgement.py} $out/judgement.py
+          cp ${./bin/swiss.py} $out/swiss.py
           cp ${./bin/judgement_schema.sql} $out/judgement_schema.sql
           cp ${./bin/with_lock.py} $out/with_lock.py
         '';
 
-        # Self-contained MCP server executable. The setup script writes
-        # `${mcp-server}/bin/tournament-mcp-server` into ~/.hermes/config.yaml,
-        # so Hermes invokes the right Python regardless of the spawning shell.
         mcp-server = pkgs.writeShellApplication {
           name = "tournament-mcp-server";
           runtimeInputs = [ pythonEnv ];
@@ -69,9 +62,6 @@
           '';
         };
 
-        # Likewise for the orchestrator: a stable path that always pulls in
-        # langfuse/httpx without requiring `nix develop` first. Sets
-        # PYTHONPATH so `import judgement` works from within the script.
         run-tournament = pkgs.writeShellApplication {
           name = "run-tournament";
           runtimeInputs = [ pythonEnv ];
@@ -81,10 +71,8 @@
           '';
         };
 
-        # Phoenix LiveView UI as an OTP release (see packages/tournament-ui.nix).
         tournament-ui = pkgs.callPackage ./packages/tournament-ui.nix { };
 
-        # Optional shellcheck for hermes-harness.sh CI.
         devTools = with pkgs; [
           shellcheck
           jq
@@ -95,7 +83,6 @@
         ];
       in
       {
-        # `nix develop` — interactive shell with the right Python on PATH.
         devShells.default = pkgs.mkShell {
           packages = [
             pythonEnv
@@ -125,21 +112,16 @@
           '';
         };
 
-        # `nix run .` — run a tournament. First arg is the config path.
-        # Example: nix run . -- configs/actions-hermes.json
         apps.default = {
           type = "app";
           program = "${run-tournament}/bin/run-tournament";
         };
 
-        # `nix run .#mcp-server` — kick off the MCP stdio server. Mostly
-        # useful for testing; setup-hermes-slots.sh wires the binary directly.
         apps.mcp-server = {
           type = "app";
           program = "${mcp-server}/bin/tournament-mcp-server";
         };
 
-        # Expose derivations so other flakes / scripts can build them.
         packages = {
           inherit
             pythonEnv
@@ -150,8 +132,6 @@
           default = run-tournament;
         };
 
-        # eachDefaultSystem exposes this as nixosModules.${system}.default —
-        # the same shape the colmena fleet consumes for kanban.
         nixosModules.default = import ./nix/module.nix {
           uiPackage = tournament-ui;
           inherit pythonEnv;

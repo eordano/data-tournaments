@@ -33,7 +33,6 @@ from bin.release_workflow.workflow import UnityReleaseWorkflow
 
 REPO = "decentraland/unity-explorer"
 
-
 def _req(commit: str, env, project: str = "") -> ReleaseRequest:
     """24h approval / 30m monitor timers when time-skipping is available;
     seconds-scale real timers when falling back to a live dev server."""
@@ -47,20 +46,13 @@ def _req(commit: str, env, project: str = "") -> ReleaseRequest:
         monitor_window_seconds=30 * 60 if ts else 1.0,
     )
 
-
 def _commit() -> str:
-    # Unique commit per test so workflow_ids don't collide across runs.
     return uuid.uuid4().hex
-
 
 def _projection(wf_id: str) -> dict:
     rows = workflow_runs.get_by_workflow_id(wf_id)
     assert len(rows) == 1, f"expected exactly one projection row, got {len(rows)}"
     return rows[0]
-
-
-# ── tests ────────────────────────────────────────────────────────────────
-
 
 async def test_happy_path_approved_promotes_and_projects(env, data_home):
     commit = _commit()
@@ -84,7 +76,6 @@ async def test_happy_path_approved_promotes_and_projects(env, data_home):
         )
         result = await handle.result()
 
-    # Workflow result — same contract as the spike.
     assert result.status == "promoted"
     stage_names = [s.stage for s in result.stages]
     assert stage_names == [
@@ -101,7 +92,6 @@ async def test_happy_path_approved_promotes_and_projects(env, data_home):
     assert all(s.status == "ok" for s in result.stages)
     assert result.approval is not None and result.approval.approver == "alice"
 
-    # Projection row (written only by activities, in DATA_TOURNAMENTS_HOME).
     run = _projection(wf_id)
     assert run["status"] == "done"
     assert run["finished_at"] is not None
@@ -109,12 +99,10 @@ async def test_happy_path_approved_promotes_and_projects(env, data_home):
     assert run["detail"]["commit"] == commit
     assert run["detail"]["result"] == "promoted"
     history_stages = [e["stage"] for e in run["stage_history"]]
-    assert history_stages == stage_names  # every stage transition recorded
+    assert history_stages == stage_names
     assert all(e["status"] == "ok" for e in run["stage_history"])
-    # Canned fallback was used (no project supplied) — and said so.
     assemble_entry = run["stage_history"][0]
     assert "canned" in assemble_entry["detail"]["note"]
-
 
 async def test_rejection_rolls_back_with_sticky_projection(env, data_home):
     commit = _commit()
@@ -151,11 +139,8 @@ async def test_rejection_rolls_back_with_sticky_projection(env, data_home):
         (e["stage"], e["status"]) for e in run["stage_history"]
     ]
 
-    # Terminal status is STICKY: a late/retried projection update cannot
-    # flip a finished run back to running.
     workflow_runs.set_status(run["id"], "running")
     assert workflow_runs.get(run["id"])["status"] == "rolled-back"
-
 
 async def test_approval_timeout_rolls_back(env, data_home):
     """No signal ever arrives: the durable approval timer fires."""
@@ -174,17 +159,15 @@ async def test_approval_timeout_rolls_back(env, data_home):
             id=wf_id,
             task_queue=task_queue,
         )
-        result = await handle.result()  # no signal sent
+        result = await handle.result()
 
     assert result.status == "rolled_back"
     assert "timed out" in result.reason
-    # Nothing after the approval gate ran.
     assert "build" not in [s.stage for s in result.stages]
 
     run = _projection(wf_id)
     assert run["status"] == "rolled-back"
     assert "timed out" in run["detail"]["reason"]
-
 
 async def test_record_started_retry_is_idempotent(data_home):
     """A retried record_started activity must not mint duplicate projection
@@ -198,23 +181,17 @@ async def test_record_started_retry_is_idempotent(data_home):
     req = ReleaseRequest(repo="acme/idem", commit="cafebabe")
 
     id_first = await aenv.run(acts.record_started, req)
-    id_retry = await aenv.run(acts.record_started, req)  # simulated retry
+    id_retry = await aenv.run(acts.record_started, req)
 
     assert id_first == id_retry
     rows = workflow_runs.get_by_workflow_id("release:acme/idem:cafebabe")
     assert len(rows) == 1
     assert rows[0]["temporal_run_id"] == "run-idem-1"
 
-    # A NEW temporal run (retry/continue-as-new of the whole workflow) DOES
-    # mint a new row — one projection row per execution.
     aenv.info = dataclasses.replace(aenv.info, workflow_run_id="run-idem-2")
     id_new_run = await aenv.run(acts.record_started, req)
     assert id_new_run != id_first
     assert len(workflow_runs.get_by_workflow_id("release:acme/idem:cafebabe")) == 2
-
-
-# ── real assemble path (catalog project seeded into tmp data home) ──────
-
 
 def _git_env(home: Path) -> dict:
     return {
@@ -223,7 +200,6 @@ def _git_env(home: Path) -> dict:
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null",
     }
-
 
 def _make_repo(root: Path) -> str:
     """Init a repo with one committed file; returns the HEAD sha."""
@@ -248,7 +224,6 @@ def _make_repo(root: Path) -> str:
         text=True,
         env=_git_env(root),
     ).stdout.strip()
-
 
 async def test_assemble_context_uses_real_catalog_project(env, data_home, tmp_path):
     """When the catalog has the project, assemble_context runs the REAL
@@ -297,5 +272,5 @@ async def test_assemble_context_uses_real_catalog_project(env, data_home, tmp_pa
     assert entry["stage"] == "assemble_context"
     assert entry["detail"]["note"] == "assembled from catalog project 'unity-proj'"
     digest = entry["detail"]["snapshot_digest"]
-    assert digest  # non-empty — a real, citable snapshot was persisted
+    assert digest
     assert catalog.get_landscape_snapshot(digest) is not None

@@ -5,7 +5,7 @@ Started: 2026-08-17 · Predecessor: unity-explorer-release-platform.md
 quality bar: the user's directive is that the tool must be genuinely
 useful to create code changes and ship software, with developer opinions
 (review comments, judging, feedback) upgrading the system itself. The
-August DCL bugsweep campaigns (corpus/dcl-bugsweeps-2026-08/) are the
+August DCL bugsweep campaigns (corpus/bugsweeps-2026-08/) are the
 yardstick: a hand-run version of exactly this product that shipped 24
 confirmed+validated fixes.
 

@@ -16,7 +16,11 @@ def canonical_json(payload: Any) -> str:
     """Deterministic JSON: sorted keys, compact separators, no ASCII escaping
     variance (unicode passes through as-is)."""
     return json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
     )
 
 

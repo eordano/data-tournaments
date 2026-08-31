@@ -1,9 +1,9 @@
 {
   "walkthrough": "catalyrst-branch-fix-loop",
   "mandate": "team of engineers automating bugfixes; user-devs at the END of the loop; every branch validated ALONE (never merged aggregates)",
-  "artifact": "https://claude.ai/code/artifact/1c5679a7-a496-46a8-91e9-eb97228358f6",
+  "artifact": "(private artifact)",
   "target_repo": {
-    "remote": "https://github.com/eordano/catalyrst",
+    "remote": "https://github.com/YOUR_ORG/catalyrst",
     "upstream_sha": "009d0fe5dbce2689b1946a64a196a8a9e3bf99d8",
     "campaign_base": "42b4717af8214597822c8795eb93364bd1cdccb7",
     "clone": "/tmp/catalyrst-e2e"
@@ -76,7 +76,7 @@
       "id": 1,
       "fix_branch_id": 1,
       "tested_sha": "99f367c6a8dd50a63599b854217b18b495af2d6a",
-      "reviewer": "esteban",
+      "reviewer": "changeme",
       "decision": "approve",
       "approval_event_id": 1
     },
@@ -84,7 +84,7 @@
       "id": 2,
       "fix_branch_id": 1,
       "tested_sha": "8c329d02aac36efabe4267b4b312fd5cd7e8c144",
-      "reviewer": "esteban",
+      "reviewer": "changeme",
       "decision": "approve",
       "approval_event_id": 2
     }
@@ -94,19 +94,19 @@
       "id": 1,
       "temporal_workflow_id": "branchfix:fix/cidv1-exact-length:99f367c6a8dd",
       "decision": "approved",
-      "approver": "esteban"
+      "approver": "changeme"
     },
     {
       "id": 2,
       "temporal_workflow_id": "branchfix:fix/cidv1-exact-length:8c329d02aac3",
       "decision": "approved",
-      "approver": "esteban"
+      "approver": "changeme"
     },
     {
       "id": 3,
-      "temporal_workflow_id": "release:catalyrst-e2e:8c329d02aac36efabeREDACTED",
+      "temporal_workflow_id": "release:catalyrst-e2e:8c329d02aac36efabe4267b4b312fd5cd7e8c144",
       "decision": "approved",
-      "approver": "esteban"
+      "approver": "changeme"
     }
   ],
   "workflow_runs": [
@@ -121,14 +121,14 @@
       "backend": "fixture",
       "workorder_ref": "catalyrst-cidv1-length-pinning",
       "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
-      "head_sha": "REDACTED"
+      "head_sha": "99f367c6a8dd50a63599b854217b18b495af2d6a"
     },
     {
       "fix_branch_id": 2,
       "backend": "fixture",
       "workorder_ref": "catalyrst-cidv1-length-pinning",
       "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
-      "head_sha": "REDACTED"
+      "head_sha": "e47f9e2bc9e5cba053d0d2cd6c484239bf26c206"
     },
     {
       "fix_branch_id": 3,

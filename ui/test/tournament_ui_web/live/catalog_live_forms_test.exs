@@ -76,7 +76,9 @@ defmodule TournamentUiWeb.CatalogLiveFormsTest do
     do: Phoenix.Flash.get(:sys.get_state(view.pid).socket.assigns.flash, :info)
 
   setup do
-    home = "/tmp/dt-catalog-forms-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-catalog-forms-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 

@@ -53,7 +53,7 @@ defmodule TournamentUiWeb.RunsLiveTest do
     py!(home, """
     db = sqlite3.connect(os.environ['DATA_TOURNAMENTS_HOME'] + '/judgements.db')
     db.execute("INSERT INTO policy(name, kind, rule) VALUES ('rel-approvers', 'approval', ?)",
-               (json.dumps({'approvers': ['esteban'], 'scope': 'release:*'}),))
+               (json.dumps({'approvers': ['changeme'], 'scope': 'release:*'}),))
     db.commit()
     """)
   end
@@ -81,7 +81,9 @@ defmodule TournamentUiWeb.RunsLiveTest do
   end
 
   setup do
-    home = "/tmp/dt-runs-live-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-runs-live-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
     System.delete_env("DT_OPERATOR")
@@ -165,10 +167,10 @@ defmodule TournamentUiWeb.RunsLiveTest do
   } do
     seed_policy!(home)
     stub = install_stub!(home, 0)
-    System.put_env("DT_OPERATOR", "esteban")
+    System.put_env("DT_OPERATOR", "changeme")
 
     {:ok, view, html} = live(conn, "/runs/show?id=#{@wf}")
-    assert html =~ "esteban"
+    assert html =~ "changeme"
     refute view |> element("#approve-button") |> render() =~ "disabled"
 
     html =
@@ -179,12 +181,12 @@ defmodule TournamentUiWeb.RunsLiveTest do
     # Stub client received the exact argv — and argv[0] is the stub path
     # from DT_RELEASE_CLIENT_CMD, honored verbatim, never bare python3.
     argv = File.read!(Path.join(home, "argv.log"))
-    assert argv =~ "approve #{@wf} --approver esteban --reason ship it"
+    assert argv =~ "approve #{@wf} --approver changeme --reason ship it"
     assert argv =~ stub
     refute argv =~ "python3"
 
     # Exactly ONE audit row exists and renders in the approval history.
-    assert [%{decision: "approved", approver: "esteban", reason: "ship it"}] =
+    assert [%{decision: "approved", approver: "changeme", reason: "ship it"}] =
              Approvals.list_events(@wf)
 
     # Flash confirms the recorded decision.
@@ -214,7 +216,7 @@ defmodule TournamentUiWeb.RunsLiveTest do
     """)
 
     install_stub!(home, 0)
-    System.put_env("DT_OPERATOR", "esteban")
+    System.put_env("DT_OPERATOR", "changeme")
 
     {:ok, view, _html} = live(conn, "/runs/show?id=#{@wf}")
 
@@ -236,7 +238,7 @@ defmodule TournamentUiWeb.RunsLiveTest do
   } do
     seed_policy!(home)
     install_stub!(home, 1)
-    System.put_env("DT_OPERATOR", "esteban")
+    System.put_env("DT_OPERATOR", "changeme")
 
     {:ok, view, _html} = live(conn, "/runs/show?id=#{@wf}")
 
@@ -262,7 +264,7 @@ defmodule TournamentUiWeb.RunsLiveTest do
   } do
     seed_policy!(home)
     install_stub!(home, 1)
-    System.put_env("DT_OPERATOR", "esteban")
+    System.put_env("DT_OPERATOR", "changeme")
 
     {:ok, view, _html} = live(conn, "/runs/show?id=#{@wf}")
 
@@ -285,7 +287,7 @@ defmodule TournamentUiWeb.RunsLiveTest do
     # The signal went out again with the same argv shape.
     argv = File.read!(Path.join(home, "argv.log"))
     assert length(String.split(argv, "\n", trim: true)) == 2
-    assert argv =~ "approve #{@wf} --approver esteban --reason ship it"
+    assert argv =~ "approve #{@wf} --approver changeme --reason ship it"
 
     # Banner gone, delivered line present.
     refute html =~ ~s(id="approval-error")
@@ -415,7 +417,7 @@ defmodule TournamentUiWeb.RunsLiveTest do
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     INSERT INTO fix_branch_ship (fix_branch_id, workflow_id, tested_sha, requested_by)
-    VALUES (7, '#{@wf}', 'headaaaa1111', 'esteban');
+    VALUES (7, '#{@wf}', 'headaaaa1111', 'changeme');
     ''')
     db.commit()
     """)
@@ -428,7 +430,7 @@ defmodule TournamentUiWeb.RunsLiveTest do
     assert link =~ ~s(href="/branch-fixes/7")
     assert link =~ "#7"
     assert html =~ "tested headaaaa1111"
-    assert html =~ "requested by esteban"
+    assert html =~ "requested by changeme"
   end
 
   test "run with no ship row has NO origin section — absent, not empty", %{conn: conn} do

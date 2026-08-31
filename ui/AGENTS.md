@@ -7,7 +7,7 @@ This is a web application written using the Phoenix web framework.
 
 ### Phoenix v1.8 guidelines
 
-- **Always** begin your LiveView templates with `<Layouts.app flash={@flash} ...>` which wraps all inner content
+- **Always** begin your LiveView templates with one of this app's workspace shells — `<.workspace_page current={...} flash={@flash} ...>` or `<.workspace_split current={...} flash={@flash} ...>` from `CoreComponents` (there is no `Layouts.app/1` in this app). Both shells declare `attr :flash, required: true`, so omitting `flash={@flash}` fails `mix precommit` via `--warnings-as-errors`
 - The `MyAppWeb.Layouts` module is aliased in the `my_app_web.ex` file, so you can use it without needing to alias it again
 - Anytime you run into errors with no `current_scope` assign:
   - You failed to follow the Authenticated Routes guidelines, or you failed to pass `current_scope` to `<Layouts.app>`

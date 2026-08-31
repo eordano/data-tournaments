@@ -3,7 +3,9 @@ defmodule TournamentUiWeb.JudgeLiveCardShapeTest do
   import Phoenix.LiveViewTest
 
   setup do
-    home = "/tmp/dt-judge-cards-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-judge-cards-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 
@@ -105,7 +107,7 @@ defmodule TournamentUiWeb.JudgeLiveCardShapeTest do
     {:ok, live, html} = live(conn, "/judge")
     assert html =~ "Nix over pip"
 
-    live |> element("button[phx-value-v='a-clearly-better']") |> render_click()
+    live |> element("button[phx-value-v='a-wins-big']") |> render_click()
     html = live |> element("form#judge-form") |> render_submit(%{})
 
     refute html =~ "Nix over pip"

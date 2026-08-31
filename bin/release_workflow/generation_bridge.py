@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 def run_generation(domain: str, *, limit: int | None = None) -> dict[str, Any]:
     """Run the REAL work-order generation pipeline for ``domain``.
 
@@ -29,8 +28,8 @@ def run_generation(domain: str, *, limit: int | None = None) -> dict[str, Any]:
                       never fake success
     """
     try:
-        from bin import generate_cards  # lazy: dspy etc.
-    except Exception as exc:  # ImportError and transitive config errors
+        from bin import generate_cards
+    except Exception as exc:
         return {
             "work_order_ids": [],
             "generated": 0,
@@ -43,7 +42,7 @@ def run_generation(domain: str, *, limit: int | None = None) -> dict[str, Any]:
         }
     try:
         result = generate_cards.run(domain, limit=limit, artifact="work-order")
-    except Exception as exc:  # domain missing, corpus errors, ...
+    except Exception as exc:
         return {
             "work_order_ids": [],
             "generated": 0,
@@ -77,7 +76,6 @@ def run_generation(domain: str, *, limit: int | None = None) -> dict[str, Any]:
         "unavailable": "",
         "summary": summary,
     }
-
 
 def gate_verdict(
     *,

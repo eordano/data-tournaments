@@ -75,9 +75,8 @@ exactly: `/`, `/start`, `/brackets`, `/new`, `/judge`, `/results`,
   through unfiltered; a user could select `whisper-large-v3` as their
   Judge model.
 - **F-7 · MINOR.** `/new` server-side file browser defaults to
-  `/Users/user/projects` — a hardcoded path that doesn't exist on this
-  machine (user is not `admin`), so the picker starts on a dead
-  directory.
+  a hardcoded macOS home path that doesn't exist on this machine (the
+  operator home differs), so the picker starts on a dead directory.
 - **F-8 · POLISH.** Nav label inconsistency: nav says "Review" but page
   is "Review queue" (route `/judge`); "Results" page is served by
   `JudgementsLive` and `/judgements` is an unlisted alias.
@@ -225,7 +224,7 @@ the charter journey (3→6) doesn't exist in the browser at all.
    (Catalog/Runs) with no connective tissue or shared onboarding.
 9. **MINOR — Approval page shows no evidence of what's being approved**
    (F-12): no spec digest, patch, or test results next to the buttons.
-10. **MINOR — Hardcoded `/Users/user/projects` default in the direct-
+10. **MINOR — Hardcoded a hardcoded macOS home path default in the direct-
     bracket file browser** (F-7) plus not-found pages returning 200
     (F-15) — small trust erosions.
 

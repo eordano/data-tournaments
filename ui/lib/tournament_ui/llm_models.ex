@@ -64,14 +64,14 @@ defmodule TournamentUi.LlmModels do
        System.get_env("LLM_BASE_URL") ||
        if(System.get_env("OPENROUTER_API_KEY"),
          do: "https://openrouter.ai/api/v1",
-         else: "https://llm.example/v1"
+         else: "https://llm.example.com/v1"
        ))
     |> String.trim_trailing("/")
   end
 
   defp api_key do
     Application.get_env(:tournament_ui, :llm_api_key) ||
-      System.get_env("LLM_GATEWAY_API_KEY") ||
+      System.get_env("LLM_HJKL_API_KEY") ||
       System.get_env("OPENROUTER_API_KEY") ||
       "none"
   end

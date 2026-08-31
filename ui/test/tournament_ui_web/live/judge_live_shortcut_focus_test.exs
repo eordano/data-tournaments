@@ -3,7 +3,9 @@ defmodule TournamentUiWeb.JudgeLiveShortcutFocusTest do
   import Phoenix.LiveViewTest
 
   setup do
-    home = "/tmp/dt-judge-shortcuts-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-judge-shortcuts-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 

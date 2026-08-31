@@ -16,13 +16,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-
 def workflow_id_for(repo: str, commit: str) -> str:
     """workflow_id convention: release:<repo>:<commit> — duplicate starts of
     the same release are rejected by the Temporal server (idempotence) and
     the id itself is provenance."""
     return f"release:{repo}:{commit}"
-
 
 @dataclass
 class ReleaseRequest:
@@ -36,26 +34,18 @@ class ReleaseRequest:
     repo: str
     commit: str
     project: str = ""
-    # Judging/generation domain (bin/domains.py). When set, the
-    # generate_workorders activity runs the REAL generation pipeline for
-    # this domain (worker env must carry the generation deps — dspy etc.);
-    # when empty, activities fall back to canned data with explicit notes.
     domain: str = ""
     requested_by: str = "unknown"
-    # Durable-timer knobs (seconds) so tests / demos can shrink them.
-    # Production defaults: 24h approval window, 30min canary monitor window.
     approval_timeout_seconds: float = 24 * 3600
     monitor_window_seconds: float = 30 * 60
-
 
 @dataclass
 class StageResult:
     """One completed stage, accumulated on the workflow for audit/query."""
 
     stage: str
-    status: str  # "ok" | "failed" | "skipped"
+    status: str
     detail: str = ""
-
 
 @dataclass
 class StageRecord:
@@ -66,15 +56,13 @@ class StageRecord:
     status: str
     detail: Optional[dict[str, Any]] = None
 
-
 @dataclass
 class RunStatusUpdate:
     """Input to the set_run_status projection activity."""
 
     run_id: int
-    status: str  # one of bin.workflow_runs.STATUSES
+    status: str
     detail: Optional[dict[str, Any]] = None
-
 
 @dataclass
 class ReleaseContext:
@@ -84,14 +72,9 @@ class ReleaseContext:
     commit: str
     changelog: list[str] = field(default_factory=list)
     open_incidents: int = 0
-    # Provenance of the assembly: real snapshot digest when the catalog had
-    # the project, empty + explanatory note on the canned-data fallback.
     snapshot_digest: str = ""
     note: str = ""
-    # Propagated from ReleaseRequest.domain so downstream activities
-    # (generate_workorders) know which generation domain to run.
     domain: str = ""
-
 
 @dataclass
 class WorkOrderBatch:
@@ -109,7 +92,6 @@ class WorkOrderBatch:
     aborted_reason: str = ""
     unavailable: str = ""
 
-
 @dataclass
 class JudgeVerdict:
     """Output of judging_gate."""
@@ -117,7 +99,6 @@ class JudgeVerdict:
     passed: bool
     score: float
     rationale: str = ""
-
 
 @dataclass
 class ApprovalDecision:
@@ -127,14 +108,12 @@ class ApprovalDecision:
     approver: str
     reason: str = ""
 
-
 @dataclass
 class BuildInfo:
     """Output of build."""
 
     artifact_url: str
     build_id: str
-
 
 @dataclass
 class CanaryReport:
@@ -143,12 +122,11 @@ class CanaryReport:
     canary_url: str
     healthy: bool
 
-
 @dataclass
 class ReleaseResult:
     """Terminal workflow result."""
 
-    status: str  # "promoted" | "rolled_back"
+    status: str
     reason: str
     repo: str
     commit: str

@@ -21,31 +21,25 @@ from typing import Any, Optional
 TERMINAL_STATUSES = ("done", "failed", "canceled", "rolled-back")
 STATUSES = ("running", "awaiting-approval") + TERMINAL_STATUSES
 
-
 def _db_path() -> Path:
     home = Path(os.environ.get("DATA_TOURNAMENTS_HOME", "/tmp/data-tournaments"))
     return home / "judgements.db"
-
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    # ADR 0001 §2 concurrency hygiene: wait instead of failing SQLITE_BUSY.
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
-
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 def init() -> None:
     """Ensure the schema (incl. workflow_run) exists. Idempotent."""
     from bin import catalog
 
     catalog.init()
-
 
 def start(
     *,
@@ -81,7 +75,6 @@ def start(
         conn.commit()
         return int(cur.lastrowid)
 
-
 def record_stage(
     run_id: int, *, stage: str, status: str, detail: Optional[dict[str, Any]] = None
 ) -> None:
@@ -107,7 +100,6 @@ def record_stage(
         )
         conn.commit()
 
-
 def set_status(
     run_id: int, status: str, *, detail: Optional[dict[str, Any]] = None
 ) -> None:
@@ -126,7 +118,7 @@ def set_status(
         if row is None:
             raise KeyError(f"workflow_run id {run_id} not found")
         if row["status"] in TERMINAL_STATUSES:
-            return  # sticky terminal state
+            return
         merged = json.loads(row["detail"])
         if detail:
             merged.update(detail)
@@ -143,14 +135,12 @@ def set_status(
             )
         conn.commit()
 
-
 def get(run_id: int) -> Optional[dict[str, Any]]:
     with _connect() as conn:
         row = conn.execute(
             "SELECT * FROM workflow_run WHERE id=?", (run_id,)
         ).fetchone()
     return _to_dict(row) if row else None
-
 
 def get_by_workflow_id(temporal_workflow_id: str) -> list[dict[str, Any]]:
     """All runs for a workflow id (retries/continue-as-new mint new run ids),
@@ -162,7 +152,6 @@ def get_by_workflow_id(temporal_workflow_id: str) -> list[dict[str, Any]]:
             (temporal_workflow_id,),
         ).fetchall()
     return [_to_dict(r) for r in rows]
-
 
 def list_runs(
     *, status: Optional[str] = None, limit: int = 50
@@ -177,7 +166,6 @@ def list_runs(
     with _connect() as conn:
         rows = conn.execute(q, args).fetchall()
     return [_to_dict(r) for r in rows]
-
 
 def _to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)

@@ -4,7 +4,7 @@ defmodule TournamentUi.DomainsTest do
   alias TournamentUi.Domains
 
   setup do
-    home = "/tmp/dt-test-#{System.unique_integer([:positive])}"
+    home = "/tmp/dt-test-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 

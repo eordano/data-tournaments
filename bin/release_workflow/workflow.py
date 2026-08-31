@@ -36,8 +36,6 @@ from typing import Any, Optional
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-# Activities and models pass through the workflow sandbox untouched
-# (imported for type refs / registration names only).
 with workflow.unsafe.imports_passed_through():
     from bin.release_workflow import activities
     from bin.release_workflow.models import (
@@ -52,10 +50,8 @@ with workflow.unsafe.imports_passed_through():
         StageRecord,
         StageResult,
         WorkOrderBatch,
-        workflow_id_for,  # re-exported for callers  # noqa: F401
     )
 
-# --- retry policies (caller-side in Temporal; annotated in activities.py) ---
 READ_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=1),
     backoff_coefficient=2.0,
@@ -81,18 +77,14 @@ ROLLBACK_RETRY = RetryPolicy(
     backoff_coefficient=2.0,
     maximum_attempts=5,
 )
-# Projection writes: local sqlite, idempotent/append-only — retry hard.
 PROJECTION_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=1),
     backoff_coefficient=2.0,
     maximum_attempts=5,
 )
 
-# Short start_to_close for stubs; real build/canary need long timeouts +
-# heartbeats (see activities.py docstrings).
 STUB_TIMEOUT = timedelta(seconds=30)
 PROJECTION_TIMEOUT = timedelta(seconds=10)
-
 
 @workflow.defn
 class UnityReleaseWorkflow:
@@ -102,7 +94,6 @@ class UnityReleaseWorkflow:
         self._current_stage: str = "created"
         self._projection_run_id: Optional[int] = None
 
-    # ------------------------------------------------------------- signals
     @workflow.signal
     def submit_approval(self, decision: ApprovalDecision) -> None:
         """Human approval Signal — sent by Phoenix LiveView button / CLI.
@@ -113,7 +104,6 @@ class UnityReleaseWorkflow:
         if self._approval is None:
             self._approval = decision
 
-    # ------------------------------------------------------------- queries
     @workflow.query
     def current_stage(self) -> str:
         return self._current_stage
@@ -122,13 +112,9 @@ class UnityReleaseWorkflow:
     def stage_results(self) -> list[StageResult]:
         return self._stages
 
-    # --------------------------------------------------------------- run
     @workflow.run
     async def run(self, req: ReleaseRequest) -> ReleaseResult:
         try:
-            # 0. record_started — projection stage 0. The activity reads the
-            # real workflow_id/run_id from activity.info(); idempotent per
-            # execution so retries never duplicate rows.
             self._current_stage = "record_started"
             self._projection_run_id = await workflow.execute_activity(
                 activities.record_started,
@@ -137,7 +123,6 @@ class UnityReleaseWorkflow:
                 retry_policy=PROJECTION_RETRY,
             )
 
-            # 1. assemble_context
             self._current_stage = "assemble_context"
             ctx: ReleaseContext = await workflow.execute_activity(
                 activities.assemble_context,
@@ -155,7 +140,6 @@ class UnityReleaseWorkflow:
                 },
             )
 
-            # 2. generate_workorders
             self._current_stage = "generate_workorders"
             batch: WorkOrderBatch = await workflow.execute_activity(
                 activities.generate_workorders,
@@ -165,7 +149,6 @@ class UnityReleaseWorkflow:
             )
             await self._record("generate_workorders", "ok", batch.summary)
 
-            # 3. judging_gate
             self._current_stage = "judging_gate"
             verdict: JudgeVerdict = await workflow.execute_activity(
                 activities.judging_gate,
@@ -180,7 +163,6 @@ class UnityReleaseWorkflow:
                 )
             await self._record("judging_gate", "ok", f"score={verdict.score}")
 
-            # 4. human approval — Signal + durable timer timeout.
             self._current_stage = "awaiting_approval"
             await self._set_projection_status("awaiting-approval")
             try:
@@ -207,7 +189,6 @@ class UnityReleaseWorkflow:
                 "approval", "ok", f"approved by {self._approval.approver}"
             )
 
-            # 5. sandbox_preflight
             self._current_stage = "sandbox_preflight"
             preflight = await workflow.execute_activity(
                 activities.sandbox_preflight,
@@ -217,7 +198,6 @@ class UnityReleaseWorkflow:
             )
             await self._record("sandbox_preflight", "ok", preflight)
 
-            # 6. build
             self._current_stage = "build"
             info: BuildInfo = await workflow.execute_activity(
                 activities.build,
@@ -227,7 +207,6 @@ class UnityReleaseWorkflow:
             )
             await self._record("build", "ok", info.build_id)
 
-            # 7. canary
             self._current_stage = "canary"
             report: CanaryReport = await workflow.execute_activity(
                 activities.canary,
@@ -237,10 +216,8 @@ class UnityReleaseWorkflow:
             )
             await self._record("canary", "ok", report.canary_url)
 
-            # 8. monitor_window — a pure durable timer (NOT activity sleep),
-            # then a point-in-time health read.
             self._current_stage = "monitor_window"
-            await asyncio.sleep(req.monitor_window_seconds)  # durable timer
+            await asyncio.sleep(req.monitor_window_seconds)
             healthy: bool = await workflow.execute_activity(
                 activities.check_canary_health,
                 report,
@@ -254,7 +231,6 @@ class UnityReleaseWorkflow:
                 )
             await self._record("monitor_window", "ok", "canary healthy")
 
-            # 9. promote
             self._current_stage = "promote"
             promoted = await workflow.execute_activity(
                 activities.promote,
@@ -278,10 +254,6 @@ class UnityReleaseWorkflow:
             )
 
         except Exception:
-            # Activity retries exhausted (or unexpected failure): attempt
-            # compensation + mark the projection failed, then re-raise so
-            # the workflow FAILS visibly — a failed release must not
-            # masquerade as a clean rolled_back.
             self._current_stage = "failed"
             try:
                 await workflow.execute_activity(
@@ -297,7 +269,6 @@ class UnityReleaseWorkflow:
                 pass
             raise
 
-    # ------------------------------------------------------------ helpers
     async def _record(
         self,
         stage: str,
@@ -310,7 +281,7 @@ class UnityReleaseWorkflow:
         projection's stage history (via activity — determinism)."""
         self._stages.append(StageResult(stage=stage, status=status, detail=detail))
         if self._projection_run_id is None:
-            return  # record_started itself failed terminally; nothing to write to
+            return
         merged = dict(projection_detail or {})
         if detail:
             merged.setdefault("summary", detail)

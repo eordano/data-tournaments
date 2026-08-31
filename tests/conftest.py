@@ -1,6 +1,7 @@
 """Pytest fixtures for the data-tournaments test suite."""
 from __future__ import annotations
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -9,7 +10,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "bin"
 
-# Put `bin/` on sys.path so `import bin.prompts`, `import judgement`, etc. work.
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 if str(BIN_DIR) not in sys.path:
@@ -17,11 +17,29 @@ if str(BIN_DIR) not in sys.path:
 
 from tests.fixtures.fake_langfuse import FakeLangfuse  # noqa: E402
 
-# Env vars that silently redirect the suite at real data / real backends.
-# Captured at import (session start) — before any monkeypatch fixture runs.
+def git_bin_dir() -> str:
+    """The directory holding the real git, for tests that shell out to it.
+
+    A hardcoded FHS PATH is not portable -- there is no /usr/bin/git on NixOS --
+    and hardcoding one turns "this machine puts git elsewhere" into a test
+    failure that reads like a code defect.
+    """
+    found = shutil.which("git")
+    if found is None:
+        pytest.skip("git is not on PATH")
+    return str(Path(found).resolve().parent)
+
+def hermetic_git_env(home: Path) -> dict:
+    """Minimal environment for a throwaway repo: real git, no user config."""
+    return {
+        "PATH": git_bin_dir(),
+        "HOME": str(home),
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+    }
+
 _FORBIDDEN_ENV_VARS = ("DATA_TOURNAMENTS_HOME", "PROMPT_BACKEND")
 _LEAKED_ENV_VARS = [v for v in _FORBIDDEN_ENV_VARS if v in os.environ]
-
 
 @pytest.fixture(autouse=True, scope="session")
 def _refuse_leaked_environment():
@@ -44,7 +62,6 @@ def _refuse_leaked_environment():
         )
     yield
 
-
 @pytest.fixture
 def fake_langfuse(monkeypatch):
     fake = FakeLangfuse()
@@ -53,14 +70,12 @@ def fake_langfuse(monkeypatch):
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-fake")
     return fake
 
-
 @pytest.fixture
 def tmp_data_home(tmp_path, monkeypatch) -> Path:
     home = tmp_path / "data-tournaments"
     home.mkdir()
     monkeypatch.setenv("DATA_TOURNAMENTS_HOME", str(home))
     return home
-
 
 @pytest.fixture(autouse=True)
 def silence_dspy_cache(monkeypatch, tmp_path):
@@ -71,7 +86,6 @@ def silence_dspy_cache(monkeypatch, tmp_path):
     """
     monkeypatch.setenv("DSPY_CACHEDIR", str(tmp_path / "dspy_cache"))
 
-
 def _scripted_lm(*responses):
     """Wrap a list of canned outputs into a DSPy DummyLM.
 
@@ -81,7 +95,6 @@ def _scripted_lm(*responses):
     import dspy
 
     return dspy.utils.DummyLM(list(responses))
-
 
 def make_evaluation_summary(examples, score):
     """Build a stub ``bin.optimize.EvaluationSummary``: exact match iff score == 1.0.

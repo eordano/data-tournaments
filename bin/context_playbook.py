@@ -11,7 +11,6 @@ import re
 from dataclasses import dataclass, replace
 from typing import Iterable
 
-
 START_MARKER = "<!-- context-playbook:start -->"
 END_MARKER = "<!-- context-playbook:end -->"
 SECTIONS = ("STRATEGIES & INSIGHTS", "EVIDENCE CHECKS", "COMMON MISTAKES TO AVOID")
@@ -19,9 +18,7 @@ _ENTRY_RE = re.compile(
     r"^\[(?P<id>[a-z]+-[0-9a-f]{10})\] helpful=(?P<helpful>\d+) "
     r"harmful=(?P<harmful>\d+)(?: domain=(?P<domain>\S+))? :: (?P<content>.+)$"
 )
-#: An entry becomes prunable once it has accumulated this much total evidence.
 PRUNE_MIN_EVIDENCE = 3
-
 
 @dataclass(frozen=True)
 class PlaybookEntry:
@@ -30,20 +27,14 @@ class PlaybookEntry:
     content: str
     helpful: int = 0
     harmful: int = 0
-    #: Optional domain scope. Rendered into the prompt so it round-trips.
     domain: str = ""
-    #: Optional source-run identifier. Never rendered into the runtime prompt;
-    #: callers persist it out of band (e.g. in the optimizer run manifest).
     provenance: str = ""
-
 
 def _clean_content(value: str) -> str:
     return " ".join(str(value).strip().split())
 
-
 def _content_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", _clean_content(value).lower()).strip()
-
 
 def _section(value: str) -> str:
     normalized = str(value).strip().upper().replace("_", " ").replace("-", " ")
@@ -63,7 +54,6 @@ def _section(value: str) -> str:
     }
     return normalized if normalized in SECTIONS else aliases.get(normalized, SECTIONS[0])
 
-
 def _entry_id(section: str, content: str, domain: str = "") -> str:
     prefix = {SECTIONS[0]: "str", SECTIONS[1]: "chk", SECTIONS[2]: "mis"}[section]
     scope = f"\0{domain}" if domain else ""
@@ -71,7 +61,6 @@ def _entry_id(section: str, content: str, domain: str = "") -> str:
         f"{section}\0{_content_key(content)}{scope}".encode()
     ).hexdigest()[:10]
     return f"{prefix}-{digest}"
-
 
 def split_prompt(prompt: str) -> tuple[str, list[PlaybookEntry]]:
     """Return the immutable seed text and parsed playbook entries."""
@@ -100,7 +89,6 @@ def split_prompt(prompt: str) -> tuple[str, list[PlaybookEntry]]:
                 )
             )
     return base, entries
-
 
 def merge_entries(
     existing: Iterable[PlaybookEntry],
@@ -140,7 +128,6 @@ def merge_entries(
         if index is None or merged[index] is None:
             return None
         if active and merged[index].domain != active:
-            # Scoped runs cannot touch global or foreign-domain entries.
             return None
         return index
 
@@ -149,8 +136,6 @@ def merge_entries(
             continue
         op = str(raw.get("op", "add")).strip().lower() or "add"
         if op not in ("add", "reinforce", "weaken", "retire"):
-            # Unknown operations are rejected outright rather than being
-            # silently coerced into an add.
             continue
         content = _clean_content(raw.get("content", ""))
         delta_domain = (
@@ -172,7 +157,6 @@ def merge_entries(
             else:
                 merged[index] = replace(entry, harmful=entry.harmful + 1)
             continue
-        # add (default): dedupe against existing content, else append.
         if len(content) < 20:
             continue
         if index is not None:
@@ -191,9 +175,6 @@ def merge_entries(
         merged.append(entry)
 
     kept = [entry for entry in merged if entry is not None]
-    # Pruning respects the same boundary as edits: a merge may only prune
-    # entries in its own scope (the active domain, or unscoped entries for a
-    # global run). Untouched foreign entries always survive.
     return [
         entry
         for entry in kept
@@ -203,7 +184,6 @@ def merge_entries(
             and entry.harmful > entry.helpful
         )
     ]
-
 
 def entries_for_domain(
     entries: Iterable[PlaybookEntry], domain: str = ""
@@ -220,7 +200,6 @@ def entries_for_domain(
         for entry in entries
         if not entry.domain or entry.domain == wanted
     ]
-
 
 def render_prompt(base: str, entries: Iterable[PlaybookEntry]) -> str:
     entries = list(entries)

@@ -57,7 +57,10 @@ defmodule TournamentUi.Campaigns do
     case query(sql, [name]) do
       {:ok, [row]} ->
         camp = campaign_to_map(row)
-        Map.put(camp, :findings, ledger_rows(camp.id))
+
+        camp
+        |> Map.put(:findings, ledger_rows(camp.id))
+        |> Map.merge(sweep_fields(camp.id))
 
       _ ->
         nil
@@ -65,6 +68,86 @@ defmodule TournamentUi.Campaigns do
   end
 
   def get_campaign(_), do: nil
+
+  @doc """
+  Sweep-layer fields for a campaign: the decoded SweepSpec (`spec`, nil for
+  pre-spec campaigns), its digest, and the `sweep_round` timeline. Pre-sweeps
+  DBs (missing columns/table) degrade to nil/[] — never a crash.
+  """
+  def sweep_fields(campaign_id) do
+    base =
+      case query("SELECT spec_json, spec_digest FROM campaign WHERE id = ?", [campaign_id]) do
+        {:ok, [[spec_json, digest]]} when is_binary(spec_json) and spec_json != "" ->
+          case Jason.decode(spec_json) do
+            {:ok, decoded} -> %{spec: decoded, spec_digest: digest}
+            _ -> %{spec: nil, spec_digest: digest}
+          end
+
+        _ ->
+          %{spec: nil, spec_digest: nil}
+      end
+
+    base
+    |> Map.put(:rounds, rounds(campaign_id))
+    |> Map.put(:dispositions, dispositions(campaign_id))
+  end
+
+  @doc """
+  {slug => latest disposition} for a campaign — the human tie-break record
+  (append-only table; last row per finding wins). Missing table -> %{}.
+  """
+  def dispositions(campaign_id) do
+    sql = """
+    SELECT f.slug, d.decision, d.rationale, d.decided_by
+    FROM finding_disposition d
+    JOIN finding f ON f.id = d.finding_id
+    WHERE f.campaign_id = ? ORDER BY d.id
+    """
+
+    case query(sql, [campaign_id]) do
+      {:ok, rows} ->
+        Map.new(rows, fn [slug, decision, rationale, decided_by] ->
+          {slug, %{decision: decision, rationale: rationale, decided_by: decided_by}}
+        end)
+
+      _ ->
+        %{}
+    end
+  end
+
+  def rounds(campaign_id) do
+    sql = """
+    SELECT round_no, status, outcome, summary, dataset_run_id, opened_at, closed_at
+    FROM sweep_round WHERE campaign_id = ? ORDER BY round_no
+    """
+
+    case query(sql, [campaign_id]) do
+      {:ok, rows} ->
+        Enum.map(rows, fn [no, status, outcome, summary, run_id, opened, closed] ->
+          %{
+            round_no: no,
+            status: status,
+            outcome: outcome,
+            summary: decode_json_map(summary),
+            dataset_run_id: run_id,
+            opened_at: opened,
+            closed_at: closed
+          }
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp decode_json_map(text) when is_binary(text) do
+    case Jason.decode(text) do
+      {:ok, %{} = m} -> m
+      _ -> %{}
+    end
+  end
+
+  defp decode_json_map(_), do: %{}
 
   # ── ledger assembly ──────────────────────────────────────────────────
 
@@ -120,7 +203,7 @@ defmodule TournamentUi.Campaigns do
   defp validations_by_finding(campaign_id) do
     sql = """
     SELECT v.finding_id, v.red_intended, v.red_observed, v.green_total,
-           v.green_passed, v.guards
+           v.green_passed, v.guards, v.perf_json
     FROM validation_ledger v
     JOIN finding f ON f.id = v.finding_id
     WHERE f.campaign_id = ? ORDER BY v.id
@@ -129,14 +212,15 @@ defmodule TournamentUi.Campaigns do
     case query(sql, [campaign_id]) do
       {:ok, rows} ->
         rows
-        |> Enum.map(fn [fid, ri, ro, gt, gp, guards] ->
+        |> Enum.map(fn [fid, ri, ro, gt, gp, guards, perf_json] ->
           {fid,
            %{
              red_intended: ri,
              red_observed: ro,
              green_total: gt,
              green_passed: gp,
-             guards: guards
+             guards: guards,
+             perf: decode_perf(perf_json)
            }}
         end)
         |> Enum.group_by(fn {fid, _} -> fid end, fn {_, v} -> v end)
@@ -145,6 +229,21 @@ defmodule TournamentUi.Campaigns do
         %{}
     end
   end
+
+  defp decode_perf(perf_json) when is_binary(perf_json) do
+    case Jason.decode(perf_json) do
+      {:ok, entries} when is_list(entries) -> entries
+      _ -> []
+    end
+  end
+
+  defp decode_perf(_), do: []
+
+  defp perf_within_budget?(%{"direction" => "min", "measured" => m, "budget" => b}),
+    do: m >= b
+
+  defp perf_within_budget?(%{"measured" => m, "budget" => b}), do: m <= b
+  defp perf_within_budget?(_), do: false
 
   # Mirrors bin/campaigns.py::_lens_summary: 'CONFIRM ×2',
   # 'CONFIRM ×2 + REFUTE→repaired', 'REFUTE ×2 open', '—'.
@@ -189,7 +288,15 @@ defmodule TournamentUi.Campaigns do
     base =
       "RED #{v.red_observed}/#{v.red_intended} GREEN #{v.green_passed}/#{v.green_total}"
 
-    if v.guards > 0, do: base <> " + #{v.guards} guards", else: base
+    base = if v.guards > 0, do: base <> " + #{v.guards} guards", else: base
+    perf = Map.get(v, :perf, [])
+
+    if perf == [] do
+      base
+    else
+      ok = Enum.count(perf, &perf_within_budget?/1)
+      base <> " PERF #{ok}/#{length(perf)}"
+    end
   end
 
   # ── private ────────────────────────────────────────────────────────────

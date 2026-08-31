@@ -1,0 +1,27 @@
+{
+  "kind": "slopsweep",
+  "corpus": [
+    {
+      "adapter": "foundry_stories",
+      "config": {
+        "root": "/path/to/your/checkout/sites/packages/features/src/stories"
+      }
+    }
+  ],
+  "intake": { "max_candidates": 100, "rationale_required": false },
+  "panel": {
+    "lenses": [
+      { "name": "slop", "prompt_ref": "lens:slop", "burden": "refute" }
+    ],
+    "human": { "rubric": "hot-or-slop", "judgement_kind": "pair", "required": true },
+    "quorum": "all_lenses_and_human"
+  },
+  "rounds": {
+    "max": 1,
+    "batching": "required",
+    "convergence": "no_new_confirmed_findings",
+    "repair_max_cycles_per_finding": 0
+  },
+  "validation": { "mode": "rubric_only" },
+  "publish": { "gate": "human", "granularity": "report-only" }
+}

@@ -5,8 +5,8 @@ later rows for other models silently ran through the first row's model while
 being *labelled* with their own configured model. The fix scopes each row's LM
 inside ``dspy.context(lm=...)`` (see bin/judgement.py run_llm_judge_for_pending).
 
-These tests pin that fix by interleaving the three seeded frontier models
-across queue rows and asserting, for EVERY row, that both:
+These tests pin that fix by interleaving three frontier models across queue
+rows and asserting, for EVERY row, that both:
 
   1. the recorded rater identity in score metadata matches the row's
      configured model, and
@@ -32,7 +32,6 @@ MODELS = (
     "anthropic/claude-opus-5",
 )
 
-
 def test_interleaved_models_record_true_rater_identity(
     tmp_data_home, fake_langfuse, monkeypatch
 ):
@@ -44,24 +43,34 @@ def test_interleaved_models_record_true_rater_identity(
 
     importlib.reload(judgement)
     judgement.init_db()
-    # Start from a clean ambient state — the worker must not depend on (or
-    # mutate) the global LM.
     dspy.settings.configure(lm=None)
 
-    # The seed panel must be exactly the three frontier models under test.
-    assert tuple(judgement.FRONTIER_OPENROUTER_MODELS) == MODELS
+    assert set(MODELS) >= set(judgement.DEFAULT_JUDGE_PANEL_MODELS)
+    assert set(MODELS) <= set(judgement.FRONTIER_OPENROUTER_MODELS)
 
     db = sqlite3.connect(str(tmp_data_home / "judgements.db"))
     db.row_factory = sqlite3.Row
+    template_id = db.execute(
+        "SELECT id FROM eval_template WHERE name=?",
+        (judgement.DEFAULT_TEMPLATE_NAME,),
+    ).fetchone()["id"]
     cfg_by_model = {}
     for row in db.execute(
         "SELECT id, rater_config FROM job_configuration "
         "WHERE rater_type='llm' AND status='active'"
     ):
         cfg_by_model[json.loads(row["rater_config"])["model"]] = row["id"]
+    for model in MODELS:
+        if model in cfg_by_model:
+            continue
+        cfg_by_model[model] = db.execute(
+            "INSERT INTO job_configuration(template_id, rater_type, rater_config) "
+            "VALUES (?, 'llm', ?)",
+            (template_id, json.dumps(judgement._openrouter_config(model))),
+        ).lastrowid
+    db.commit()
     assert set(MODELS) <= set(cfg_by_model)
 
-    # Six queue rows, interleaved: kimi, glm, opus, kimi, glm, opus.
     expected: dict[int, str] = {}
     for i, model in enumerate(list(MODELS) * 2):
         pid = db.execute(
@@ -81,18 +90,12 @@ def test_interleaved_models_record_true_rater_identity(
     db.commit()
     db.close()
 
-    # Fake LM factory: one DummyLM per row, tagged with the configured model.
-    # The rationale it emits is the provenance tracer — if a previous row's LM
-    # leaked into this row, the persisted rationale carries the WRONG tag.
     def fake_build_lm(cfg):
         model = cfg["model"]
-        # Enough responses that a *leaked* LM would keep serving later rows
-        # (with the wrong tag) instead of erroring out — the mislabeling is
-        # what this test must catch, so make the leak "succeed".
         lm = dspy.utils.DummyLM([{
             "rationale": f"served-by:{model}",
             "confidence": "mid",
-            "verdict": "a-marginally-better",
+            "verdict": "a-wins",
         }] * 12)
         lm.model = model
         return lm
@@ -117,13 +120,11 @@ def test_interleaved_models_record_true_rater_identity(
         ).fetchall()
         assert len(verdict_rows) == 1, f"row {pid}: expected exactly one verdict score"
         meta = json.loads(verdict_rows[0]["metadata"])
-        # (1) Recorded rater identity == configured model for this row.
         assert meta["rater"] == {
             "type": "llm",
             "model": model,
             "base_url": "https://openrouter.ai/api/v1",
         }, f"row {pid}: rater identity mismatch"
-        # (2) The LM that actually generated the judgement was this row's LM.
         assert meta["rationale"] == f"served-by:{model}", (
             f"row {pid}: generation was served by a leaked LM "
             f"(got {meta['rationale']!r}, configured {model!r})"
@@ -137,5 +138,4 @@ def test_interleaved_models_record_true_rater_identity(
         assert json.loads(conf_rows[0]["metadata"])["rater"]["model"] == model
     db.close()
 
-    # The drain must not have leaked any LM into global DSPy state.
     assert dspy.settings.lm is None

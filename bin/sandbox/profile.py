@@ -7,14 +7,12 @@ values (names only).
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 import pydantic
 
 from bin.landscape.canonical import content_digest
 
 _SECRET_REF_RE = re.compile(r"^secret://[a-z0-9][a-z0-9\-]*/[a-z0-9][a-z0-9\-_.]*$")
-
 
 class SecretRef(pydantic.BaseModel):
     """A named secret, resolved only at the execution boundary.
@@ -27,9 +25,6 @@ class SecretRef(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(frozen=True)
 
     ref: str
-    # Where the resolved value may be used: 'egress-proxy' substitutes the
-    # value into allowlisted outbound requests (plaintext never enters the
-    # guest); 'env' injects into the sandbox process env (trusted tier only).
     exposure: str = "egress-proxy"
 
     @pydantic.field_validator("ref")
@@ -50,17 +45,13 @@ class SecretRef(pydantic.BaseModel):
             raise ValueError("exposure must be 'egress-proxy' or 'env'")
         return v
 
-
 class EgressPolicy(pydantic.BaseModel):
     """Deny-by-default network policy. Only named destinations are reachable."""
 
     model_config = pydantic.ConfigDict(frozen=True)
 
-    # e.g. ("github.com", "api.github.com", "cache.nixos.org")
     allow_domains: tuple[str, ...] = ()
-    # CIDR literals for non-DNS destinations, e.g. ("10.0.0.7/32",)
     allow_cidrs: tuple[str, ...] = ()
-    # When True the sandbox has NO network at all (preflight default).
     deny_all: bool = False
 
     @pydantic.field_validator("allow_domains")
@@ -79,7 +70,6 @@ class EgressPolicy(pydantic.BaseModel):
             raise ValueError("deny_all=True cannot combine with allowlists")
         return self
 
-
 class SandboxProfile(pydantic.BaseModel):
     """Reproducible sandbox identity + resource budget + policy.
 
@@ -90,9 +80,7 @@ class SandboxProfile(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(frozen=True)
 
     name: str
-    backend: str  # 'fake' | 'e2b' | 'microvm'
-    # Nix flake pin, e.g. 'github:decentraland/unity-explorer?rev=<commit>'
-    # or a path flake with an implied flake.lock digest.
+    backend: str
     flake_ref: str = ""
     repo: str = ""
     base_commit: str = ""
@@ -106,14 +94,12 @@ class SandboxProfile(pydantic.BaseModel):
     @pydantic.field_validator("backend")
     @classmethod
     def _backend_known(cls, v: str) -> str:
-        if v not in ("fake", "e2b", "microvm"):
-            raise ValueError("backend must be one of: fake, e2b, microvm")
+        if v not in ("fake", "e2b", "microvm", "bwrap"):
+            raise ValueError("backend must be one of: fake, e2b, microvm, bwrap")
         return v
 
     @pydantic.model_validator(mode="after")
     def _write_needs_pinned_commit(self) -> "SandboxProfile":
-        # Write access without a pinned commit would make runs unreproducible
-        # and un-auditable.
         if not self.read_only and not self.base_commit:
             raise ValueError("write-capable profiles require base_commit")
         return self

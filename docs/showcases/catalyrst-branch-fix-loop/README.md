@@ -1,9 +1,9 @@
-# Walkthrough: branch-fix loop on a REAL repo — eordano/catalyrst
+# Walkthrough: branch-fix loop on a REAL repo — YOUR_ORG/catalyrst
 
 Mandate (artifact 1c5679a7): a team of engineers automating bugfixes with
 user-devs standing at the END of the loop, and every candidate branch
 validated ALONE at its exact head SHA — never a merged aggregate.
-This run targets a real repository: https://github.com/eordano/catalyrst
+This run targets a real repository: https://github.com/YOUR_ORG/catalyrst
 (Rust Decentraland catalyst), upstream 009d0fe.
 
 Status legend: REAL LOCAL · REAL HUMAN (browser) · REAL TEMPORAL ·

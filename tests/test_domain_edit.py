@@ -9,7 +9,6 @@ Edit semantics:
 """
 import pytest
 
-
 @pytest.fixture
 def fresh_with_domain(fake_langfuse, monkeypatch, tmp_data_home):
     monkeypatch.setattr("bin.prompts._client_factory", lambda: fake_langfuse.as_client())
@@ -30,15 +29,12 @@ def fresh_with_domain(fake_langfuse, monkeypatch, tmp_data_home):
     )
     return {"langfuse": fake_langfuse, "domain_id": domain_id}
 
-
 def test_update_description_only(fresh_with_domain):
     from bin import domains
     domains.update_domain("demo", description="new description")
     spec = domains.get_domain("demo")
     assert spec.description == "new description"
-    # other fields unchanged
     assert spec.corpus_source["kind"] == "inline"
-
 
 def test_update_corpus_source(fresh_with_domain):
     from bin import domains
@@ -47,29 +43,23 @@ def test_update_corpus_source(fresh_with_domain):
     spec = domains.get_domain("demo")
     assert spec.corpus_source == new_src
 
-
 def test_update_corpus_source_validates(fresh_with_domain):
     from bin import domains
     with pytest.raises(ValueError, match="kind"):
         domains.update_domain("demo", corpus_source={"kind": "bogus"})
-    # original unchanged
     assert domains.get_domain("demo").corpus_source["kind"] == "inline"
-
 
 def test_update_unknown_domain_raises(fresh_with_domain):
     from bin import domains
     with pytest.raises(LookupError):
         domains.update_domain("nope", description="x")
 
-
 def test_update_partial_keeps_other_fields(fresh_with_domain):
     from bin import domains
     domains.update_domain("demo", description="d2")
     spec = domains.get_domain("demo")
-    # generator_prompt and judge_prompt should be untouched
     assert spec.generator_prompt == "card-generator:demo"
     assert spec.judge_prompt == "judge-instructions:demo"
-
 
 def test_cli_edit_subcommand_updates_prompts(fresh_with_domain, capsys):
     """The CLI bridge (--edit mode) pushes new prompt versions and updates the row."""
@@ -99,12 +89,10 @@ def test_cli_edit_subcommand_updates_prompts(fresh_with_domain, capsys):
     assert spec.description == "edited!"
     assert spec.corpus_source["items"][0]["text"] == "y"
 
-    # Latest prompt versions reflect the new text
     cur_gen = prompts.get("card-generator:demo", label="production")
     cur_jud = prompts.get("judge-instructions:demo", label="production")
     assert cur_gen == "edited-generator"
     assert cur_jud == "edited-judge"
-
 
 def test_cli_edit_idempotent_when_prompt_unchanged(fresh_with_domain):
     """If the prompt text is unchanged, --edit doesn't push a redundant version."""
@@ -116,8 +104,8 @@ def test_cli_edit_idempotent_when_prompt_unchanged(fresh_with_domain):
         "--edit",
         "--name", "demo",
         "--description", "first edit",
-        "--generator-prompt", "first-gen",  # same as seeded
-        "--judge-prompt", "first-judge",    # same as seeded
+        "--generator-prompt", "first-gen",
+        "--judge-prompt", "first-judge",
         "--corpus-spec", '{"kind":"inline","items":[{"text":"x"}]}',
     ]
     sys_argv_orig = sys.argv
@@ -130,7 +118,4 @@ def test_cli_edit_idempotent_when_prompt_unchanged(fresh_with_domain):
     finally:
         sys.argv = sys_argv_orig
 
-    # Should still find the domain with the new description
     assert domains.get_domain("demo").description == "first edit"
-    # Idempotency is enforced by bin.prompts.push (already tested elsewhere);
-    # here we just confirm --edit doesn't crash on a no-op prompt change.

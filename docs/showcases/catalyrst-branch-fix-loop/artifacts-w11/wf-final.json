@@ -1,5 +1,5 @@
 {
-  "workflow_id": "release:eordano/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
+  "workflow_id": "release:YOUR_ORG/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
   "current_stage": "promoted",
   "stage_results": [
     {
@@ -20,7 +20,7 @@
     {
       "stage": "approval",
       "status": "ok",
-      "detail": "approved by esteban"
+      "detail": "approved by changeme"
     },
     {
       "stage": "sandbox_preflight",

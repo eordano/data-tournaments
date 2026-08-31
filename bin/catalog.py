@@ -47,22 +47,15 @@ if str(_REPO_ROOT) not in sys.path:
 
 from bin.landscape.canonical import canonical_json, content_digest  # noqa: E402
 
-# ── Paths / connection ───────────────────────────────────────────────────
-
-#: ADR 0002 §2 — canonical bodies at or below this many UTF-8 bytes are
-#: stored inline in the row; larger ones go to the CAS and the column is NULL.
 INLINE_MAX_BYTES = 64 * 1024
 
 SCHEMA_PATH = Path(__file__).parent / "judgement_schema.sql"
 
-
 def _data_home() -> Path:
     return Path(os.environ.get("DATA_TOURNAMENTS_HOME", "/tmp/data-tournaments"))
 
-
 def _db_path() -> Path:
     return _data_home() / "judgements.db"
-
 
 class _ClosingConnection(sqlite3.Connection):
     """sqlite3.Connection whose ``with`` block also CLOSES on exit.
@@ -77,19 +70,16 @@ class _ClosingConnection(sqlite3.Connection):
 
     def __exit__(self, exc_type, exc, tb):
         try:
-            return super().__exit__(exc_type, exc, tb)  # commit / rollback
+            return super().__exit__(exc_type, exc, tb)
         finally:
             self.close()
-
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(_db_path()), factory=_ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    # ADR 0001 §2 concurrency hygiene: wait instead of failing SQLITE_BUSY.
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
-
 
 def init() -> None:
     """Apply the shared schema file. Idempotent (all DDL is IF NOT EXISTS).
@@ -103,15 +93,10 @@ def init() -> None:
     with _connect() as conn:
         conn.executescript(schema_sql)
 
-
-# ── CAS helpers (ADR 0002 §3–4) ─────────────────────────────────────────
-
-
 def cas_path(digest: str) -> Path:
     """$DATA_TOURNAMENTS_HOME/cas/sha256/<first-2-hex>/<hex> for a hex digest."""
     hexd = digest.split(":", 1)[1] if digest.startswith("sha256:") else digest
     return _data_home() / "cas" / "sha256" / hexd[:2] / hexd
-
 
 def cas_write(digest: str, body: Union[str, bytes]) -> Path:
     """Write ``body`` to the CAS: temp file + atomic rename, then chmod 0444.
@@ -128,7 +113,7 @@ def cas_write(digest: str, body: Union[str, bytes]) -> Path:
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
-        os.rename(tmp_name, path)  # atomic on the same filesystem
+        os.rename(tmp_name, path)
     except BaseException:
         try:
             os.unlink(tmp_name)
@@ -137,7 +122,6 @@ def cas_write(digest: str, body: Union[str, bytes]) -> Path:
         raise
     os.chmod(path, 0o444)
     return path
-
 
 def cas_read(digest: str) -> str:
     """Read a CAS body back as text. Missing file is a hard error (ADR 0002:
@@ -150,7 +134,6 @@ def cas_read(digest: str) -> str:
         )
     return path.read_text(encoding="utf-8")
 
-
 def _place_body(digest: str, canonical_body: str) -> Optional[str]:
     """ADR 0002 placement: return the inline column value (or None → CAS).
 
@@ -162,20 +145,12 @@ def _place_body(digest: str, canonical_body: str) -> Optional[str]:
     cas_write(digest, canonical_body)
     return None
 
-
-# ── Mutable catalog CRUD ─────────────────────────────────────────────────
-
-
 def _row_to_dict(row: sqlite3.Row, json_fields: tuple[str, ...] = ()) -> dict:
     d = dict(row)
     for f in json_fields:
         if d.get(f) is not None:
             d[f] = json.loads(d[f])
     return d
-
-
-# -- project --
-
 
 def create_project(*, name: str, description: str = "", metadata: Optional[dict] = None) -> int:
     with _connect() as conn:
@@ -189,14 +164,12 @@ def create_project(*, name: str, description: str = "", metadata: Optional[dict]
         conn.commit()
         return cur.lastrowid
 
-
 def get_project(name: str) -> dict:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM project WHERE name=?", (name,)).fetchone()
         if row is None:
             raise LookupError(f"no project named {name!r}")
         return _row_to_dict(row, ("metadata",))
-
 
 def list_projects(status: str = "active") -> list[dict]:
     with _connect() as conn:
@@ -205,7 +178,6 @@ def list_projects(status: str = "active") -> list[dict]:
         ).fetchall()
         return [_row_to_dict(r, ("metadata",)) for r in rows]
 
-
 def archive_project(name: str) -> None:
     with _connect() as conn:
         conn.execute(
@@ -213,10 +185,6 @@ def archive_project(name: str) -> None:
             (name,),
         )
         conn.commit()
-
-
-# -- component --
-
 
 def create_component(
     *, project: str, name: str, kind: str, metadata: Optional[dict] = None
@@ -234,7 +202,6 @@ def create_component(
         conn.commit()
         return cur.lastrowid
 
-
 def get_component(project: str, name: str) -> dict:
     pid = get_project(project)["id"]
     with _connect() as conn:
@@ -245,7 +212,6 @@ def get_component(project: str, name: str) -> dict:
             raise LookupError(f"no component {name!r} in project {project!r}")
         return _row_to_dict(row, ("metadata",))
 
-
 def list_components(project: str, status: str = "active") -> list[dict]:
     pid = get_project(project)["id"]
     with _connect() as conn:
@@ -254,7 +220,6 @@ def list_components(project: str, status: str = "active") -> list[dict]:
             (pid, status),
         ).fetchall()
         return [_row_to_dict(r, ("metadata",)) for r in rows]
-
 
 def archive_component(project: str, name: str) -> None:
     pid = get_project(project)["id"]
@@ -265,10 +230,6 @@ def archive_component(project: str, name: str) -> None:
             (pid, name),
         )
         conn.commit()
-
-
-# -- source --
-
 
 def create_source(
     *,
@@ -294,7 +255,6 @@ def create_source(
         conn.commit()
         return cur.lastrowid
 
-
 def get_source(project: str, name: str) -> dict:
     pid = get_project(project)["id"]
     with _connect() as conn:
@@ -305,7 +265,6 @@ def get_source(project: str, name: str) -> dict:
             raise LookupError(f"no source {name!r} in project {project!r}")
         return _row_to_dict(row, ("config",))
 
-
 def list_sources(project: str, status: str = "active") -> list[dict]:
     pid = get_project(project)["id"]
     with _connect() as conn:
@@ -314,7 +273,6 @@ def list_sources(project: str, status: str = "active") -> list[dict]:
             (pid, status),
         ).fetchall()
         return [_row_to_dict(r, ("config",)) for r in rows]
-
 
 def archive_source(project: str, name: str) -> None:
     pid = get_project(project)["id"]
@@ -325,10 +283,6 @@ def archive_source(project: str, name: str) -> None:
             (pid, name),
         )
         conn.commit()
-
-
-# -- capability --
-
 
 def create_capability(*, name: str, description: str = "") -> int:
     with _connect() as conn:
@@ -342,14 +296,12 @@ def create_capability(*, name: str, description: str = "") -> int:
         conn.commit()
         return cur.lastrowid
 
-
 def get_capability(name: str) -> dict:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM capability WHERE name=?", (name,)).fetchone()
         if row is None:
             raise LookupError(f"no capability named {name!r}")
         return _row_to_dict(row)
-
 
 def list_capabilities(status: str = "active") -> list[dict]:
     with _connect() as conn:
@@ -358,15 +310,10 @@ def list_capabilities(status: str = "active") -> list[dict]:
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
-
 def archive_capability(name: str) -> None:
     with _connect() as conn:
         conn.execute("UPDATE capability SET status='archived' WHERE name=?", (name,))
         conn.commit()
-
-
-# -- skill --
-
 
 def create_skill(
     *,
@@ -388,7 +335,6 @@ def create_skill(
         conn.commit()
         return cur.lastrowid
 
-
 def get_skill(name: str, version: Optional[int] = None) -> dict:
     """Fetch a skill by name (latest version when version is None)."""
     with _connect() as conn:
@@ -405,14 +351,12 @@ def get_skill(name: str, version: Optional[int] = None) -> dict:
             raise LookupError(f"no skill {name!r} v{version}")
         return _row_to_dict(row, ("metadata",))
 
-
 def list_skills(status: str = "active") -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM skill WHERE status=? ORDER BY name, version", (status,)
         ).fetchall()
         return [_row_to_dict(r, ("metadata",)) for r in rows]
-
 
 def archive_skill(name: str, version: int) -> None:
     with _connect() as conn:
@@ -421,10 +365,6 @@ def archive_skill(name: str, version: int) -> None:
             (name, version),
         )
         conn.commit()
-
-
-# -- environment --
-
 
 def create_environment(*, name: str, kind: str, config: Optional[dict] = None) -> int:
     with _connect() as conn:
@@ -438,14 +378,12 @@ def create_environment(*, name: str, kind: str, config: Optional[dict] = None) -
         conn.commit()
         return cur.lastrowid
 
-
 def get_environment(name: str) -> dict:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM environment WHERE name=?", (name,)).fetchone()
         if row is None:
             raise LookupError(f"no environment named {name!r}")
         return _row_to_dict(row, ("config",))
-
 
 def list_environments(status: str = "active") -> list[dict]:
     with _connect() as conn:
@@ -454,15 +392,10 @@ def list_environments(status: str = "active") -> list[dict]:
         ).fetchall()
         return [_row_to_dict(r, ("config",)) for r in rows]
 
-
 def archive_environment(name: str) -> None:
     with _connect() as conn:
         conn.execute("UPDATE environment SET status='archived' WHERE name=?", (name,))
         conn.commit()
-
-
-# -- policy --
-
 
 def create_policy(*, name: str, kind: str, rule: dict) -> int:
     with _connect() as conn:
@@ -476,14 +409,12 @@ def create_policy(*, name: str, kind: str, rule: dict) -> int:
         conn.commit()
         return cur.lastrowid
 
-
 def get_policy(name: str) -> dict:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM policy WHERE name=?", (name,)).fetchone()
         if row is None:
             raise LookupError(f"no policy named {name!r}")
         return _row_to_dict(row, ("rule",))
-
 
 def list_policies(status: str = "active") -> list[dict]:
     with _connect() as conn:
@@ -492,15 +423,10 @@ def list_policies(status: str = "active") -> list[dict]:
         ).fetchall()
         return [_row_to_dict(r, ("rule",)) for r in rows]
 
-
 def archive_policy(name: str) -> None:
     with _connect() as conn:
         conn.execute("UPDATE policy SET status='archived' WHERE name=?", (name,))
         conn.commit()
-
-
-# -- join tables --
-
 
 def link_component_capability(component_id: int, capability_id: int) -> None:
     with _connect() as conn:
@@ -511,7 +437,6 @@ def link_component_capability(component_id: int, capability_id: int) -> None:
         )
         conn.commit()
 
-
 def link_project_skill(project_id: int, skill_id: int) -> None:
     with _connect() as conn:
         conn.execute(
@@ -520,17 +445,7 @@ def link_project_skill(project_id: int, skill_id: int) -> None:
         )
         conn.commit()
 
-
-# ── Immutable, content-addressed artifacts ──────────────────────────────
-#
-# Insert functions accept either a bin.landscape model instance (preferred —
-# it carries its own .digest) or the model's canonical dict (the exact
-# _content_payload() shape); for a dict the digest is recomputed via the same
-# bin.landscape.canonical code path the model uses. The DB layer never
-# invents digests of its own.
-
 _TRUST_TIER_TO_INT = {"tier1_system": 1, "tier2_internal": 2, "tier3_external": 3}
-
 
 def _payload_and_digest(obj: Any) -> tuple[dict, str]:
     """Normalize a landscape model instance or canonical dict to
@@ -539,7 +454,6 @@ def _payload_and_digest(obj: Any) -> tuple[dict, str]:
         return obj, content_digest(obj)
     payload = obj._content_payload()
     return payload, obj.digest
-
 
 def insert_evidence_ref(ref: Any, *, source_id: int) -> str:
     """Persist an EvidenceRef (model or canonical dict). Returns the digest.
@@ -551,7 +465,7 @@ def insert_evidence_ref(ref: Any, *, source_id: int) -> str:
     payload, digest = _payload_and_digest(ref)
     body = canonical_json(payload)
     tier = _TRUST_TIER_TO_INT[payload["trust_tier"]]
-    inline = _place_body(digest, body)  # CAS-first when large
+    inline = _place_body(digest, body)
     with _connect() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO evidence_ref"
@@ -570,7 +484,6 @@ def insert_evidence_ref(ref: Any, *, source_id: int) -> str:
         conn.commit()
     return digest
 
-
 def get_evidence_ref(digest: str) -> dict:
     """Fetch an evidence_ref row; ``body`` is always resolved (inline or CAS)."""
     with _connect() as conn:
@@ -583,7 +496,6 @@ def get_evidence_ref(digest: str) -> dict:
     if d["body"] is None:
         d["body"] = cas_read(digest)
     return d
-
 
 def list_evidence_refs_for_source(source_id: int) -> list[dict]:
     """All frozen evidence_ref rows captured for one catalog source.
@@ -606,7 +518,6 @@ def list_evidence_refs_for_source(source_id: int) -> list[dict]:
         out.append(d)
     return out
 
-
 def insert_landscape_snapshot(
     snapshot: Any, *, project_id: int, schema_version: int = 1
 ) -> str:
@@ -628,7 +539,6 @@ def insert_landscape_snapshot(
         conn.commit()
     return digest
 
-
 def get_landscape_snapshot(digest: str) -> dict:
     """Fetch a landscape_snapshot row; ``manifest`` is always resolved."""
     with _connect() as conn:
@@ -642,7 +552,6 @@ def get_landscape_snapshot(digest: str) -> dict:
         d["manifest"] = cas_read(digest)
     return d
 
-
 def link_snapshot_evidence(snapshot_digest: str, evidence_digest: str) -> None:
     """Record that a snapshot includes an evidence ref (insert-only join)."""
     with _connect() as conn:
@@ -653,7 +562,6 @@ def link_snapshot_evidence(snapshot_digest: str, evidence_digest: str) -> None:
         )
         conn.commit()
 
-
 def list_snapshot_evidence(snapshot_digest: str) -> list[str]:
     with _connect() as conn:
         rows = conn.execute(
@@ -662,7 +570,6 @@ def list_snapshot_evidence(snapshot_digest: str) -> list[str]:
             (snapshot_digest,),
         ).fetchall()
         return [r["evidence_digest"] for r in rows]
-
 
 def insert_context_pack(pack: Any, *, schema_version: int = 1) -> str:
     """Persist a ContextPack (model or canonical dict). Returns the digest."""
@@ -679,7 +586,6 @@ def insert_context_pack(pack: Any, *, schema_version: int = 1) -> str:
         conn.commit()
     return digest
 
-
 def get_context_pack(digest: str) -> dict:
     with _connect() as conn:
         row = conn.execute(
@@ -691,7 +597,6 @@ def get_context_pack(digest: str) -> dict:
     if d["manifest"] is None:
         d["manifest"] = cas_read(digest)
     return d
-
 
 def insert_workflow_spec(
     spec: Any,
@@ -714,7 +619,6 @@ def insert_workflow_spec(
         conn.commit()
     return digest
 
-
 def get_workflow_spec(digest: str) -> dict:
     with _connect() as conn:
         row = conn.execute(
@@ -727,13 +631,8 @@ def get_workflow_spec(digest: str) -> dict:
         d["spec"] = cas_read(digest)
     return d
 
-
-# ── CLI (debug aid; the real entry points are the importable functions) ──
-
-
 def _print(obj: Any) -> None:
     print(json.dumps(obj, indent=2, default=str))
-
 
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(prog="catalog.py", description=__doc__.splitlines()[0])
@@ -915,7 +814,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif cmd == "archive-policy":
         archive_policy(args.name)
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

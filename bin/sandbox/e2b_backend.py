@@ -31,10 +31,8 @@ from bin.sandbox.backend import (
 
 _OUTPUT_TAIL = 4000
 
-
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 class E2BSandboxBackend(SandboxBackend):
     name = "e2b"
@@ -99,7 +97,6 @@ class E2BSandboxBackend(SandboxBackend):
                 workdir = "/workspace"
                 setup = []
                 if profile.repo and profile.base_commit:
-                    # Pin the workspace to the profile's base commit.
                     url = profile.repo
                     if url.startswith("github.com:"):
                         url = "https://github.com/" + url.split(":", 1)[1]
@@ -123,7 +120,7 @@ class E2BSandboxBackend(SandboxBackend):
                     if proc.exit_code != 0 and cmd in setup:
                         error = f"workspace pin failed: {cmd}"
                         break
-        except Exception as e:  # infrastructure failure, not command failure
+        except Exception as e:
             error = error or f"{type(e).__name__}: {e}"
 
         return SandboxRunResult(

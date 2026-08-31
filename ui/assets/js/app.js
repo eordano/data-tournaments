@@ -33,6 +33,42 @@ const isTypingTarget = (target) => {
 
 const Hooks = {
   ...colocatedHooks,
+  NodeDrag: {
+    mounted() {
+      const handle = this.el.querySelector("[data-drag-handle]") || this.el
+      this.onDown = (e) => {
+        if (e.button !== 0) return
+        e.preventDefault()
+        const startX = e.clientX
+        const startY = e.clientY
+        const origLeft = parseInt(this.el.style.left || "0", 10)
+        const origTop = parseInt(this.el.style.top || "0", 10)
+        let moved = false
+        const onMove = (ev) => {
+          const dx = ev.clientX - startX
+          const dy = ev.clientY - startY
+          if (Math.abs(dx) + Math.abs(dy) > 3) moved = true
+          this.el.style.left = `${origLeft + dx}px`
+          this.el.style.top = `${origTop + dy}px`
+        }
+        const onUp = (ev) => {
+          window.removeEventListener("pointermove", onMove)
+          window.removeEventListener("pointerup", onUp)
+          if (moved) {
+            this.pushEvent("node_moved", {
+              id: this.el.dataset.nodeId,
+              x: origLeft + (ev.clientX - startX),
+              y: origTop + (ev.clientY - startY),
+            })
+          }
+        }
+        window.addEventListener("pointermove", onMove)
+        window.addEventListener("pointerup", onUp)
+      }
+      handle.addEventListener("pointerdown", this.onDown)
+    },
+    destroyed() {},
+  },
   JudgeShortcuts: {
     mounted() {
       this.onKeydown = (event) => {

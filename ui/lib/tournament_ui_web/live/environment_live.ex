@@ -28,6 +28,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
 
   alias TournamentUi.Catalog
   alias TournamentUi.Environment
+  alias TournamentUi.Judgement
   alias TournamentUi.LangfusePrompts
   alias TournamentUi.LlmModels
   alias TournamentUi.OptimizerRunner
@@ -38,7 +39,8 @@ defmodule TournamentUiWeb.EnvironmentLive do
   @optimizer_script System.get_env("OPTIMIZE_SCRIPT") ||
                       Path.expand("../../../../bin/optimize.py", __DIR__)
 
-  @repo_root_static Path.expand("../../../../..", __ENV__.file)
+  @repo_root_static System.get_env("DATA_TOURNAMENTS_REPO") ||
+                      Path.expand("../../../../..", __ENV__.file)
 
   @blank_project %{"name" => "", "description" => ""}
 
@@ -74,6 +76,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
        optimizer_error: nil,
        latest_run: nil,
        prompt_backend: nil,
+       default_rubric: Judgement.default_rubric(),
        models: [],
        show_all_models: false,
        judge_model: "",
@@ -251,7 +254,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
   end
 
   def handle_event("optimize", params, socket) do
-    rubric = Map.get(params, "rubric", "card-prioritizer-v0")
+    rubric = Map.get(params, "rubric") || Judgement.default_rubric()
     prompt_name = params |> Map.get("prompt_name", "judge-instructions") |> String.trim()
     scope = optimizer_scope(prompt_name)
     judge_model = params |> Map.get("judge_model", "") |> String.trim()
@@ -410,6 +413,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
     ~H"""
     <.workspace_page
       current={:environment}
+      flash={@flash}
       max_width="max-w-6xl"
       title="Environment"
       subtitle="What campaigns run in: evidence sources, prompts, rubrics, pipelines, and policies."
@@ -434,6 +438,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
           <.prompts_tab
             prompts={@prompts}
             prompt_backend={@prompt_backend}
+            default_rubric={@default_rubric}
             latest_run={@latest_run}
             optimizer_status={@optimizer_status}
             log_lines={@log_lines}
@@ -599,6 +604,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
 
   attr :prompts, :list, required: true
   attr :prompt_backend, :any, required: true
+  attr :default_rubric, :any, required: true
   attr :latest_run, :any, required: true
   attr :optimizer_status, :atom, required: true
   attr :log_lines, :list, required: true
@@ -624,7 +630,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
           phx-submit="optimize"
           class="flex items-center gap-2 flex-wrap"
         >
-          <input type="hidden" name="rubric" value="card-prioritizer-v0" />
+          <input type="hidden" name="rubric" value={@default_rubric} />
           <label class="text-xs opacity-70 flex items-center gap-1">
             Target
             <select name="prompt_name" class="select select-xs select-bordered">
@@ -853,7 +859,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
     <div id="env-rubrics">
       <%= case @rubrics do %>
         <% :unavailable -> %>
-          <.not_initialized what="Rubrics (eval_template)" />
+          <.not_initialized id="rubrics" what="Rubrics (eval_template)" />
         <% [] -> %>
           <div class="app-card p-8 text-center text-sm opacity-70" id="env-rubrics-empty">
             No rubrics registered yet. Initializing the judgement fabric seeds the default rubric.
@@ -912,7 +918,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
         <h2 class="text-xs uppercase tracking-widest opacity-60 mb-3">Registry</h2>
         <%= case @pipelines do %>
           <% :unavailable -> %>
-            <.not_initialized what="Pipelines" />
+            <.not_initialized id="pipelines" what="Pipelines" />
           <% [] -> %>
             <div class="app-card p-8 text-center text-sm opacity-70" id="env-pipelines-empty">
               No pipelines registered yet (bin/pipelines.py register / seed-defaults).
@@ -953,7 +959,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
         <h2 class="text-xs uppercase tracking-widest opacity-60 mb-3">Domain bindings</h2>
         <%= case @bindings do %>
           <% :unavailable -> %>
-            <.not_initialized what="Domain bindings" />
+            <.not_initialized id="bindings" what="Domain bindings" />
           <% [] -> %>
             <p class="text-sm opacity-60" id="env-bindings-empty">
               No domain is bound to a pipeline yet (bindings are permanent; bin/pipelines.py bind).
@@ -1000,7 +1006,7 @@ defmodule TournamentUiWeb.EnvironmentLive do
       </p>
       <%= case @policies do %>
         <% :unavailable -> %>
-          <.not_initialized what="Policies" />
+          <.not_initialized id="policies" what="Policies" />
         <% [] -> %>
           <div class="app-card p-8 text-center text-sm opacity-70" id="env-policies-empty">
             No policies exist. Approvals fail closed until one is created
@@ -1045,10 +1051,11 @@ defmodule TournamentUiWeb.EnvironmentLive do
   end
 
   attr :what, :string, required: true
+  attr :id, :string, required: true
 
   defp not_initialized(assigns) do
     ~H"""
-    <div class="app-card p-6 text-sm opacity-70" id="env-not-initialized">
+    <div class="app-card p-6 text-sm opacity-70" id={"env-not-initialized-#{@id}"}>
       {@what} are not initialized in this data home — the table does not exist yet.
       Run the fabric init (bin/judgement.py init or bin/catalog.py init) to create it.
     </div>

@@ -59,14 +59,10 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-# ── Vocabulary ────────────────────────────────────────────────────────────
-
 SUBJECTS = ("idea", "execution")
 JUDGEMENTS = ("pair", "single")
 FOREACH = ("branch", "candidate", "artifact")
 
-# Known platform actions. Extensible: append here when a new platform
-# action becomes bindable in a pipeline stage.
 ACTIONS = [
     "branch_author",
     "branch_validation",
@@ -75,24 +71,16 @@ ACTIONS = [
     "assemble_pack",
 ]
 
-# Actions that RELEASE work products; each one demands the fail-closed
-# single-execution judgement gate somewhere before it.
 RELEASE_ACTIONS = ["audited_release"]
 
 _STAGE_KEYS_JUDGEMENT = {"key", "subject", "judgement", "rubric", "foreach"}
 _STAGE_KEYS_ACTION = {"key", "action", "foreach"}
 
-
-# ── Paths / connection (bin/campaigns.py conventions) ─────────────────────
-
-
 def _data_home() -> Path:
     return Path(os.environ.get("DATA_TOURNAMENTS_HOME", "/tmp/data-tournaments"))
 
-
 def _db_path() -> Path:
     return _data_home() / "judgements.db"
-
 
 class _ClosingConnection(sqlite3.Connection):
     """sqlite3.Connection whose ``with`` block also CLOSES on exit
@@ -100,19 +88,16 @@ class _ClosingConnection(sqlite3.Connection):
 
     def __exit__(self, exc_type, exc, tb):
         try:
-            return super().__exit__(exc_type, exc, tb)  # commit / rollback
+            return super().__exit__(exc_type, exc, tb)
         finally:
             self.close()
-
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(_db_path()), factory=_ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    # ADR 0001 §2 concurrency hygiene: wait instead of failing SQLITE_BUSY.
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
-
 
 def init() -> None:
     """Apply the shared schema file. Idempotent (all DDL is IF NOT EXISTS)."""
@@ -120,24 +105,15 @@ def init() -> None:
 
     catalog.init()
 
-
-# ── Canonical JSON + digest ───────────────────────────────────────────────
-
-
 def canonical_json(payload: Any) -> str:
     """Deterministic JSON: sorted keys, compact separators (landscape
     canonical.py convention) — identical content ⇒ identical digest,
     independent of dict insertion order."""
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
-
 def definition_digest(definition: dict) -> str:
     """sha256 hex over the canonical JSON form of ``definition``."""
     return hashlib.sha256(canonical_json(definition).encode("utf-8")).hexdigest()
-
-
-# ── Validation (fail closed) ──────────────────────────────────────────────
-
 
 def _rubric_exists(conn: sqlite3.Connection, rubric: str) -> bool:
     """Direct SQL lookup against eval_template by NAME — deliberately
@@ -146,7 +122,6 @@ def _rubric_exists(conn: sqlite3.Connection, rubric: str) -> bool:
         "SELECT 1 FROM eval_template WHERE name=? LIMIT 1", (rubric,)
     ).fetchone()
     return row is not None
-
 
 def _rubric_shape(conn: sqlite3.Connection, rubric: str) -> Optional[dict]:
     """Return {'judgement_kind', 'subjects'} for the LATEST version of the
@@ -166,7 +141,6 @@ def _rubric_shape(conn: sqlite3.Connection, rubric: str) -> Optional[dict]:
         "subjects": outdef.get("subjects", ["execution"]),
     }
 
-
 def validate_definition(definition: dict, conn: sqlite3.Connection) -> None:
     """Raise ValueError when ``definition`` violates the pipeline contract.
 
@@ -181,7 +155,6 @@ def validate_definition(definition: dict, conn: sqlite3.Connection) -> None:
         raise ValueError("pipeline definition requires a non-empty 'stages' list")
 
     seen_keys: set[str] = set()
-    # (index, subject, judgement) for judgement stages seen so far, in order.
     judgement_stages: list[tuple[int, str, str]] = []
 
     for i, stage in enumerate(stages):
@@ -224,9 +197,6 @@ def validate_definition(definition: dict, conn: sqlite3.Connection) -> None:
                     f"{ACTIONS}"
                 )
             if action in RELEASE_ACTIONS:
-                # FAIL-CLOSED RULE (contract §4): the stages BEFORE a release
-                # action must include >=1 single execution judgement. A pair
-                # execution judgement may rank branches but NEVER substitutes.
                 gate = [
                     (j, s, k)
                     for (j, s, k) in judgement_stages
@@ -264,8 +234,6 @@ def validate_definition(definition: dict, conn: sqlite3.Connection) -> None:
                     f"stage {key!r}: rubric {rubric!r} names no existing "
                     "eval_template — register the rubric first"
                 )
-            # Stage/rubric compatibility (fail closed): the stage's declared
-            # kind and subject must be satisfiable by the rubric itself.
             if shape["judgement_kind"] != judgement:
                 raise ValueError(
                     f"stage {key!r}: judgement={judgement!r} but rubric "
@@ -278,10 +246,6 @@ def validate_definition(definition: dict, conn: sqlite3.Connection) -> None:
                     f"{rubric!r} subjects {shape['subjects']}"
                 )
             judgement_stages.append((i, subject, judgement))
-
-
-# ── Registry API ──────────────────────────────────────────────────────────
-
 
 def register_pipeline(name: str, definition: dict) -> dict:
     """Validate + insert ``definition`` as the next version of ``name``.
@@ -307,7 +271,6 @@ def register_pipeline(name: str, definition: dict) -> dict:
         conn.commit()
         return {"id": cur.lastrowid, "name": name, "version": version, "digest": digest}
 
-
 def get_pipeline(name: str, version: Optional[int] = None) -> dict:
     """Fetch one pipeline (latest version when ``version`` is None)."""
     with _connect() as conn:
@@ -325,7 +288,6 @@ def get_pipeline(name: str, version: Optional[int] = None) -> dict:
             raise LookupError(f"no pipeline named {name!r}{suffix}")
         return _row_to_dict(row)
 
-
 def list_pipelines() -> list[dict]:
     """All pipeline versions, ordered by (name, version)."""
     with _connect() as conn:
@@ -333,7 +295,6 @@ def list_pipelines() -> list[dict]:
             "SELECT * FROM pipeline ORDER BY name, version"
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
-
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
     return {
@@ -345,10 +306,6 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         "created_at": row["created_at"],
     }
 
-
-# ── Domain binding (permanent; see module docstring for semantics) ────────
-
-
 def _resolve_domain_id(conn: sqlite3.Connection, domain: Union[str, int]) -> int:
     if isinstance(domain, int):
         row = conn.execute("SELECT id FROM domain WHERE id=?", (domain,)).fetchone()
@@ -357,7 +314,6 @@ def _resolve_domain_id(conn: sqlite3.Connection, domain: Union[str, int]) -> int
     if row is None:
         raise LookupError(f"no domain {domain!r}")
     return row["id"]
-
 
 def bind_domain(
     domain: Union[str, int], pipeline_name: str, version: Optional[int] = None
@@ -395,7 +351,6 @@ def bind_domain(
             "version": pipe["version"],
         }
 
-
 def get_domain_binding(domain: Union[str, int]) -> Optional[dict]:
     """Return {pipeline, version, definition} for ``domain``, or None."""
     with _connect() as conn:
@@ -413,14 +368,11 @@ def get_domain_binding(domain: Union[str, int]) -> Optional[dict]:
             "definition": json.loads(row["definition"]),
         }
 
-
-# ── Seed (contract §4 example pipeline) ───────────────────────────────────
-
 BRANCH_FIX_REVIEW = {
     "name": "branch-fix-review",
     "stages": [
         {"key": "idea-compare", "subject": "idea", "judgement": "pair",
-         "rubric": "pair-idea-wheel-v1"},
+         "rubric": "pair-idea-wheel-v2"},
         {"key": "author", "action": "branch_author"},
         {"key": "validate-each", "action": "branch_validation"},
         {"key": "execution-each", "subject": "execution", "judgement": "single",
@@ -429,18 +381,17 @@ BRANCH_FIX_REVIEW = {
     ],
 }
 
-
 def seed_defaults() -> dict:
     """Register the contract's branch-fix-review pipeline (idempotent).
 
-    Requires the pair-wheel-v1 / single-execution-v1 rubrics to already
+    Requires the pair-idea-wheel-v2 / single-execution-v1 rubrics to already
     exist (seeded by the judgement-template slice); raises a clear error
     otherwise. If branch-fix-review already exists with the SAME digest,
     returns the existing latest version instead of inserting a new one.
     """
     with _connect() as conn:
         missing = [
-            r for r in ("pair-idea-wheel-v1", "single-execution-v1")
+            r for r in ("pair-idea-wheel-v2", "single-execution-v1")
             if not _rubric_exists(conn, r)
         ]
     if missing:
@@ -457,13 +408,8 @@ def seed_defaults() -> dict:
         return {k: latest[k] for k in ("id", "name", "version", "digest")}
     return register_pipeline("branch-fix-review", BRANCH_FIX_REVIEW)
 
-
-# ── CLI (debug aid; the real entry points are the importable functions) ──
-
-
 def _print(obj: Any) -> None:
     print(json.dumps(obj, indent=2, default=str))
-
 
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(prog="pipelines.py", description=__doc__.splitlines()[0])
@@ -513,7 +459,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif cmd == "seed-defaults":
         _print(seed_defaults())
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

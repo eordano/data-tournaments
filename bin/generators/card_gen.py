@@ -21,7 +21,6 @@ from dspy.utils.exceptions import AdapterParseError
 
 from bin import prompts as _prompts
 
-
 class CardGenError(Exception):
     """Base class for classified per-item generation failures.
 
@@ -31,26 +30,17 @@ class CardGenError(Exception):
 
     failure_class = "error"
 
-
 class CardGenTimeout(CardGenError):
     failure_class = "timeout"
-
 
 class CardGenParseError(CardGenError):
     failure_class = "parse-error"
 
-
 class CardGenTruncation(CardGenError):
     failure_class = "truncation"
 
-
-#: finish_reason values that mean "output budget exhausted" across providers.
 _LENGTH_FINISH_REASONS = {"length", "max_tokens", "max_output_tokens"}
 
-#: Appended to every generator prompt. The dspy signature already puts the
-#: machine-parseable `cards` payload first (it is the sole output field), but
-#: reasoning-heavy models can burn the whole output budget on analysis before
-#: emitting it. Make the answer-first, bounded contract explicit.
 OUTPUT_CONTRACT = (
     "Output contract: emit the machine-parseable `cards` payload immediately, "
     "before any prose, analysis, or explanation. Do not spend output tokens "
@@ -60,14 +50,12 @@ OUTPUT_CONTRACT = (
     "commentary must come after the payload, never before it."
 )
 
-
 def _is_timeout_error(exc: BaseException) -> bool:
     """True for stdlib TimeoutError and provider timeout types (litellm.Timeout,
     httpx.ReadTimeout, ...) without importing every provider library."""
     if isinstance(exc, TimeoutError):
         return True
     return any("timeout" in cls.__name__.lower() for cls in type(exc).__mro__)
-
 
 def _finish_reason_hit_limit(lm, start_idx: int, *, last_only: bool = False) -> Optional[str]:
     """Return the offending finish_reason if any LM call made since
@@ -97,12 +85,10 @@ def _finish_reason_hit_limit(lm, start_idx: int, *, last_only: bool = False) -> 
                 return str(reason)
     return None
 
-
 class Card(pydantic.BaseModel):
     title: str
     body: str
     source_ref: Optional[str] = None
-
 
 class CardGenSig(dspy.Signature):
     """Extract one or more cards from a piece of corpus text.
@@ -120,7 +106,6 @@ class CardGenSig(dspy.Signature):
             "the corpus has natural identifiers."
         )
     )
-
 
 class CardGen(dspy.Module):
     """A DSPy module wrapping a Predict whose system prompt comes from
@@ -167,10 +152,6 @@ class CardGen(dspy.Module):
                 raise CardGenTimeout(f"LM call timed out: {e}") from e
             raise
 
-        # Parsing succeeded, but if the winning call exhausted its output
-        # budget the payload may have been truncated mid-stream and then
-        # "repaired" by the adapter's JSON fixer into a valid-looking (but
-        # incomplete) finding. Incomplete means failed — never keep it.
         reason = _finish_reason_hit_limit(lm, history_start, last_only=True)
         if reason:
             raise CardGenTruncation(
@@ -187,9 +168,6 @@ class CardGen(dspy.Module):
             try:
                 items.append(self.item_model(**item))
             except (pydantic.ValidationError, TypeError) as e:
-                # A malformed item is a parse failure for the whole finding —
-                # silently dropping it would shrink the payload into a
-                # valid-looking but incomplete result.
                 raise CardGenParseError(
                     f"{self.item_model.__name__} item failed validation: {str(e)[:300]}"
                 ) from e

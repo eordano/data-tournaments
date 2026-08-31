@@ -1,4 +1,20 @@
 defmodule TournamentUiWeb.JudgeLiveUxTest do
+  @moduledoc """
+  The judging screen as a person actually operates it.
+
+  Two groups here are about the one irreversible action on the page.
+  `discard-a`/`discard-b` eject an item from the pool forever and cancel
+  its outstanding queue rows, while the five comparison verdicts can all
+  be re-judged; `docs/design/priority-tournament.md`, "Discard is a
+  verdict, not a loss, and it is PER SIDE". So the southern diagonals must
+  not weigh the same as "a wins" (colour, glyph, and the consequence
+  naming what happens to the OTHER side), and the keyboard path must not
+  let a "digit, space" rhythm eject by muscle memory.
+
+  The other group holds Skip to a single contract: selected like any other
+  verdict, submitted through the same button. A second Skip affordance
+  that submits on the spot throws away a rationale already typed.
+  """
   use TournamentUiWeb.ConnCase
   import Phoenix.LiveViewTest
 
@@ -22,7 +38,7 @@ defmodule TournamentUiWeb.JudgeLiveUxTest do
       })
     end)
 
-    home = "/tmp/dt-judge-ux-#{System.unique_integer([:positive])}"
+    home = "/tmp/dt-judge-ux-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 
@@ -127,30 +143,152 @@ defmodule TournamentUiWeb.JudgeLiveUxTest do
     refute refreshed =~ "loading full brief"
   end
 
-  test "verdict buttons show number-key labels for keyboard nav", %{conn: conn} do
-    {:ok, _live, html} = live(conn, "/judge")
-    # 8 verdicts in card-prioritizer-v0 → numbers 1..8 appear next to the labels
-    assert html =~ ~r/text-\[10px\].*?>\s*1\s*</
-    assert html =~ ~r/text-\[10px\].*?>\s*2\s*</
-  end
-
-  test "pressing number key picks the corresponding verdict", %{conn: conn} do
+  test "the default rubric offers its wheel plus an off-wheel skip", %{conn: conn} do
     {:ok, live, _html} = live(conn, "/judge")
 
-    # Get the verdict enum so we know what "1" maps to
-    html = render(live)
+    for {pos, verdict} <- [
+          {"nw", "a-wins"},
+          {"n", "tie"},
+          {"ne", "b-wins"},
+          {"w", "a-wins-big"},
+          {"e", "b-wins-big"},
+          {"sw", "discard-a"},
+          {"se", "discard-b"}
+        ] do
+      assert has_element?(live, "#wheel-#{pos}[phx-value-v='#{verdict}']"),
+             "missing wheel button #{pos} -> #{verdict}"
+    end
 
-    [first_verdict | _] =
-      ~w(a-clearly-better a-marginally-better tie-both-strong tie-both-weak b-marginally-better b-clearly-better incoherent skip)
+    refute has_element?(live, "#wheel-s"),
+           "south stays empty: there is no 'both are bad' verdict"
 
-    assert html =~ first_verdict
+    assert has_element?(live, "#operational-verdicts button#operational-skip"),
+           "a rater who cannot call a pairing must have somewhere to say so"
 
-    new_html =
-      render_hook(live, "keydown", %{"key" => "1"})
+    refute has_element?(live, "#verdict-wheel button[phx-value-v='skip']"),
+           "skip establishes nothing, so it never occupies a wheel position"
+  end
 
-    assert new_html =~ "btn-primary"
-    # The verdict status line shows the picked verdict
-    assert new_html =~ first_verdict
+  test "pressing a numpad key picks the reversible verdict at that position", %{conn: conn} do
+    {:ok, live, _html} = live(conn, "/judge")
+
+    assert render_hook(live, "keydown", %{"key" => "8"}) =~ "tie"
+    assert has_element?(live, "#wheel-n[aria-checked='true']")
+
+    render_hook(live, "keydown", %{"key" => "4"})
+    assert has_element?(live, "#wheel-w[aria-checked='true']")
+    refute has_element?(live, "#wheel-n[aria-checked='true']")
+  end
+
+  test "the discard cells are dressed as destructive, the comparison cells are not", %{conn: conn} do
+    {:ok, live, html} = live(conn, "/judge")
+
+    for pos <- ["sw", "se"] do
+      assert has_element?(live, "#wheel-#{pos}[data-destructive='true']"),
+             "#{pos} ejects an item from the pool for good and must not weigh the " <>
+               "same as a verdict that can be re-judged"
+
+      assert html =~ ~r/id="wheel-#{pos}"[^>]*class="[^"]*text-error/,
+             "#{pos} must not render btn-ghost border app-hairline, byte-identical " <>
+               "to 'a wins'"
+    end
+
+    for pos <- ["nw", "n", "ne", "w", "e"] do
+      assert has_element?(live, "#wheel-#{pos}[data-destructive='false']")
+    end
+
+    assert html =~ "Ejects A permanently; B is not credited and is paired again."
+    assert html =~ "Ejects B permanently; A is not credited and is paired again."
+  end
+
+  test "a digit-then-space rhythm cannot eject: the discard key must be pressed twice", %{
+    conn: conn
+  } do
+    {:ok, live, _html} = live(conn, "/judge")
+
+    armed = render_hook(live, "keydown", %{"key" => "1"})
+    refute has_element?(live, "#wheel-sw[aria-checked='true']")
+    assert has_element?(live, "#discard-armed")
+    assert armed =~ "Ejects A permanently; B is not credited and is paired again."
+
+    after_space = render_hook(live, "keydown", %{"key" => " "})
+
+    assert after_space =~ "first card",
+           "space is the submit key for every other verdict, so a judge in rhythm " <>
+             "would have ejected A here"
+
+    render_hook(live, "keydown", %{"key" => "1"})
+    assert has_element?(live, "#wheel-sw[aria-checked='true']")
+    refute has_element?(live, "#discard-armed")
+
+    submitted = render_hook(live, "keydown", %{"key" => " "})
+    refute submitted =~ "first card"
+    assert submitted =~ "third card"
+  end
+
+  test "any other key disarms a half-pressed discard", %{conn: conn} do
+    {:ok, live, _html} = live(conn, "/judge")
+
+    render_hook(live, "keydown", %{"key" => "3"})
+    assert has_element?(live, "#discard-armed")
+
+    render_hook(live, "keydown", %{"key" => "2"})
+    refute has_element?(live, "#discard-armed")
+    refute has_element?(live, "#wheel-se[aria-checked='true']")
+
+    render_hook(live, "keydown", %{"key" => "3"})
+    render_hook(live, "keydown", %{"key" => "8"})
+    refute has_element?(live, "#discard-armed")
+    assert has_element?(live, "#wheel-n[aria-checked='true']")
+  end
+
+  test "the mouse path puts the consequence on the submit button itself", %{conn: conn} do
+    {:ok, live, _html} = live(conn, "/judge")
+
+    live |> element("#wheel-n") |> render_click()
+    submit = live |> element("#judge-submit") |> render()
+    refute submit =~ "data-confirm", "a tie must not stop to ask"
+    assert submit =~ "Submit"
+
+    live |> element("#wheel-sw") |> render_click()
+    submit = live |> element("#judge-submit") |> render()
+
+    assert submit =~ "data-confirm",
+           "the app's only other data-confirm guards archiving a source whose " <>
+             "evidence is kept; ejecting an item from the pool is not reversible"
+
+    assert submit =~ "Ejects A permanently"
+    assert submit =~ "Eject and continue"
+  end
+
+  test "skip is selected like every other verdict and never submits on its own", %{conn: conn} do
+    {:ok, live, _html} = live(conn, "/judge")
+
+    refute has_element?(live, "button[phx-click='skip']"),
+           "a Skip that submits immediately is a second contract, and it throws " <>
+             "away a rationale the judge already typed"
+
+    assert has_element?(live, "#operational-skip"),
+           "a rater who cannot call a pairing still needs somewhere to say so"
+
+    render_hook(live, "keydown", %{"key" => "s"})
+    assert has_element?(live, "#operational-skip[aria-pressed='true']")
+    assert render(live) =~ "first card"
+
+    assert render_hook(live, "keydown", %{"key" => " "}) =~ "third card"
+  end
+
+  test "the keyboard hint advertises only the digits that do something", %{conn: conn} do
+    {:ok, _live, html} = live(conn, "/judge")
+
+    assert html =~ "1 3 4 6 7 8 9",
+           "the shipped wheel leaves due south empty, so 2 and 5 are inert"
+
+    refute html =~ "1-9",
+           "2 sits physically between the two permanent verdicts; advertising it " <>
+             "as a compass key is how a judge finds out by pressing it"
+
+    assert html =~ "an eject key must be pressed twice"
   end
 
   test "pressing J moves to next pending row", %{conn: conn} do

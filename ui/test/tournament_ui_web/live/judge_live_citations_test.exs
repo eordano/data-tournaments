@@ -9,7 +9,9 @@ defmodule TournamentUiWeb.JudgeLiveCitationsTest do
   # UNTRUSTED), source kind, first excerpt line, https-only source link.
 
   setup do
-    home = "/tmp/dt-judge-cite-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-judge-cite-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 

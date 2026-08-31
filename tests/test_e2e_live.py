@@ -1,4 +1,4 @@
-"""End-to-end smoke test against real langfuse.example + llm.example.
+"""End-to-end smoke test against real langfuse.example.com + llm.example.com.
 
 Skipped unless RUN_LIVE_TESTS=1. Run before declaring v1 done::
 
@@ -9,7 +9,6 @@ import os
 import sqlite3
 import sys
 import uuid
-from pathlib import Path
 
 import pytest
 
@@ -21,9 +20,7 @@ pytestmark = [
     ),
 ]
 
-
 TEST_PROMPT_NAME = f"e2e-test-{uuid.uuid4().hex[:8]}"
-
 
 def test_can_push_and_get_a_prompt(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_TOURNAMENTS_HOME", str(tmp_path / "dt"))
@@ -35,7 +32,6 @@ def test_can_push_and_get_a_prompt(monkeypatch, tmp_path):
     assert v >= 1
     assert prompts.get(TEST_PROMPT_NAME) == text
     print(f"[e2e] pushed {TEST_PROMPT_NAME} v{v}")
-
 
 def test_full_loop_judge_optimize_promote(monkeypatch, tmp_path):
     """Push baseline → seed fabric with synthetic human verdicts → run GEPA →
@@ -53,7 +49,6 @@ def test_full_loop_judge_optimize_promote(monkeypatch, tmp_path):
     judgement.init_db()
     print(f"[e2e] init_db OK at {home}")
 
-    # Seed enough examples for train / validation / untouched holdout.
     db = sqlite3.connect(str(home / "judgements.db"))
     cfg_id = db.execute(
         "SELECT id FROM job_configuration WHERE rater_type='human'"
@@ -65,25 +60,25 @@ def test_full_loop_judge_optimize_promote(monkeypatch, tmp_path):
     cards = [
         ("Cyclomatic hotspot in handler.py: 14 branches",
          "README mentions Python 3.10",
-         "a-clearly-better"),
+         "a-wins-big"),
         ("Typo in error message",
          "Auth token logged in plaintext",
-         "b-clearly-better"),
+         "b-wins-big"),
         ("Unused import",
          "Race condition in cache eviction",
-         "b-clearly-better"),
+         "b-wins-big"),
         ("Function name shadows builtin",
          "Misspelled variable in dead code path",
-         "a-marginally-better"),
+         "a-wins"),
         ("README has stale install instructions",
          "Memory leak in long-running worker",
-         "b-clearly-better"),
+         "b-wins-big"),
         ("Cancellation is ignored during shutdown",
          "A public API can silently corrupt its cache file",
-         "b-clearly-better"),
+         "b-wins-big"),
         ("A crash has an exact source path and trigger",
          "A broad style concern has no source evidence",
-         "a-clearly-better"),
+         "a-wins-big"),
     ]
     for i, (a, b, verdict) in enumerate(cards):
         rid = str(uuid.uuid4())
@@ -110,9 +105,8 @@ def test_full_loop_judge_optimize_promote(monkeypatch, tmp_path):
     db.close()
     print("[e2e] seeded 7 human judgements")
 
-    # Run GEPA against the real LLM gateway.
     result = optimize.run(
-        rubric="card-prioritizer-v0",
+        rubric="pair-wheel-v2",
         max_metric_calls=16,
         min_trainset=7,
         prompt_name="judge-instructions",
@@ -133,7 +127,6 @@ def test_full_loop_judge_optimize_promote(monkeypatch, tmp_path):
     assert candidate_text != production_text
     assert "context-playbook:start" in candidate_text
 
-    # Promote candidate → production.
     prompts.set_label("judge-instructions", result.candidate_version, "production")
     new_production = prompts.get("judge-instructions", label="production")
     assert new_production == candidate_text

@@ -18,25 +18,35 @@ bin/                 Shell + Python harnesses (no build step)
   hermes_mcp_server.py  Stdio MCP server: read_file + pick_winner, traces to Langfuse
   run-tournament.py  Orchestrator: config.json → rounds → matches → Langfuse experiments
   setup-hermes-slots.sh  One-time: registers N Hermes MCP slots
-  dt_stack.py        Supervisor for the serving stack: Temporal dev server,
-                     release worker, Phoenix UI (`dt_stack.py up|down`; state
-                     under $DT_STACK_HOME, default ~/.dt-stack)
   with_lock.py       fcntl.flock helper (re-execs under a lock)
 configs/             Example tournament config JSONs
-docs/                ADRs, specs, design notes, research surveys, runbook, and
-                     click-through showcases with screenshots + run artifacts
-infra/               Caddyfile (single-origin proxy), an nginx vhost example
-                     for public exposure, and a microvm egress profile
-nix/ + packages/     NixOS module and package expressions (tournament UI,
-                     dspy, gepa, magicattr)
-reports/             End-to-end evaluation reports from real runs
-skills/              Agent skill definitions used by the workorder pipeline
-spikes/              Exploratory prototypes (e.g. Temporal release workflow)
-tests/               pytest suite: harnesses, catalog, landscape adapters
-                     (the UI keeps its own ExUnit tests under ui/test/)
+  sweeps/            Example SweepSpec JSONs (bugsweep, perfsweep, featuresweep, slopsweep)
 flake.nix            Pins langfuse + httpx via python3.withPackages
 ui/                  Phoenix LiveView workflow (domains, review, results, prompt tuning, direct brackets)
 ```
+
+## Sweeps
+
+A **sweep** is a campaign whose review process is declared as data: a
+versioned [SweepSpec](docs/design/sweeps.md) (kind, corpus adapters, lens
+panel, round structure, validation mode, publish gate) frozen onto the
+campaign row at creation. Four kinds ship: `bugsweep` (RED/GREEN
+validation), `perfsweep` (quantitative perf budgets), `featuresweep`
+(foundry `story.md` corpus, spec-honesty lenses), and `slopsweep`
+(hot-or-slop judging over generated artifacts). Review rounds are
+first-class and enforced: one open round at a time, a hard `rounds.max`
+cap, required per-lens batching before a round closes, and a computed
+convergence outcome — the machinery that keeps reviews from running 11
+serial rounds. See `configs/sweeps/` for working examples — their corpus
+paths are placeholders (`/tmp/data-tournaments/uploads/...`,
+`/path/to/your/checkout/...`), so point each `config.path` / `config.root`
+at your own local checkout or upload before running a sweep — and
+`bin/campaigns.py` (`open-round` / `close-round` / `dispose-finding` /
+`metrics` / `export-corpus` / `validate-spec` / `get-spec`) for the CLI.
+Specs can also be composed visually at `/designer` — a node-graph editor
+(corpus → intake → lens/human panel → rounds → validation → publish)
+whose graph compiles to the SweepSpec, validates through the real
+pydantic model, and creates the campaign in one click.
 
 ## Environment
 
@@ -45,7 +55,7 @@ ui/                  Phoenix LiveView workflow (domains, review, results, prompt
 | `DATA_TOURNAMENTS_HOME` | `/tmp/data-tournaments` | Runtime state: logs, locks, slot files, uploads |
 | `DATA_TOURNAMENTS_BIN`  | `$(realpath bin)`        | Where the scripts live |
 | `DATA_TOURNAMENTS_CONFIGS` | `$(repo)/configs`     | Where tournament JSON configs live |
-| `TOURNAMENT_BROWSE_ROOTS` | `/Users/user/projects:/tmp` | Server-side file-browser sandbox |
+| `TOURNAMENT_BROWSE_ROOTS` | `$HOME/projects:/tmp` | Server-side file-browser sandbox |
 | `LANGFUSE_PUBLIC_KEY` | _(required for tracing)_ | Langfuse API public key |
 | `LANGFUSE_SECRET_KEY` | _(required for tracing)_ | Langfuse API secret key |
 | `LANGFUSE_HOST` | `https://cloud.langfuse.com` | Self-hosted: set to your instance URL |
@@ -63,11 +73,6 @@ ui/                  Phoenix LiveView workflow (domains, review, results, prompt
 The full variable reference (model-role selection, provider precedence,
 context budget) lives in the `bin/llm_config.py` module docstring — the
 single source of truth all runtime code reads through.
-
-Hermes is a sandboxed agent runtime from a separate project; the
-`TOURNAMENT_HERMES_CMD` default assumes its flake is checked out at
-`~/projects/sandboxed-agents`. Point the variable at any command that
-launches an agent exposing the `read_file` + `pick_winner` MCP tools.
 
 If the Langfuse env vars are unset, the orchestrator and MCP server still run
 end-to-end — just without traces, dataset runs, or judge scores. The LLM-judge
@@ -139,13 +144,11 @@ Results for reviewer-facing outcome analysis.
 
 ## Reverse proxy: one origin for app + Langfuse REST
 
-Two paths depending on whether you want a public URL or just local dev:
-
 ### Local-only (Caddy, no public exposure)
 
 `infra/Caddyfile` puts Caddy in front of Phoenix and proxies the Langfuse
-REST API, so a single tunnel CAN expose both — but for pure local dev you
-don't need the tunnel:
+REST API; a single tunnel can expose both, but pure local dev needs no
+tunnel:
 
 ```bash
 # terminal 1 — Phoenix
@@ -163,20 +166,19 @@ Configurable via env (defaults shown):
 |---|---|---|
 | `PROXY_LISTEN` | `:8080` | Caddy bind address |
 | `PHOENIX_UPSTREAM` | `localhost:4777` | where `mix phx.server` is bound |
-| `LANGFUSE_UPSTREAM` | `langfuse.example` | Langfuse FQDN (HTTPS) |
+| `LANGFUSE_UPSTREAM` | `langfuse.example.com` | Langfuse FQDN (HTTPS) |
 
-### Public URL via a TLS-terminating host (preferred when you have one)
+### Public URL via colmena fleet (preferred when you have one)
 
-If the Phoenix dev server should be reachable from outside the dev
-machine at e.g. `https://tournaments.example`, the cleanest path is an
-nginx vhost on whichever host already terminates TLS for your domain.
-The proxyPass upstream is the dev machine's tailnet IP, so dev still
-happens locally — only the public hostname lives on the TLS host.
+To reach the dev server from outside this Mac at e.g.
+`https://tournaments.example.com`, add an nginx vhost on the colmena host
+that already terminates TLS for `*.example.com` (in this fleet:
+`your-colmena-host`), with the proxyPass upstream pointed at the Mac's
+tailnet IP. `infra/colmena/tournaments.nix` is a staging copy of the
+colmena module (or inline the vhost block into `services/default.nix`
+for a smaller diff).
 
-`infra/colmena/tournaments.nix` is a ready-made NixOS/colmena module for
-that vhost; adapt the hostname and upstream to your network.
-
-On the dev machine, run Phoenix with `PHX_LISTEN_ALL=1` so it binds
+On the Mac side, run Phoenix with `PHX_LISTEN_ALL=1` so it binds
 `0.0.0.0:4000` instead of loopback only:
 
 ```bash
@@ -186,8 +188,7 @@ nix develop --command bash -c '
 '
 ```
 
-Tailnet ACLs gate access — public users hit the TLS host's nginx, nginx
-proxies to the dev machine over the tailnet, the dev machine responds.
+Tailnet ACLs gate access.
 
 ## Tournament config
 

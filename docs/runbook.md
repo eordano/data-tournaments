@@ -52,7 +52,7 @@ first decision wins in the workflow).
 Bootstrap a policy:
 
     python bin/catalog.py create-policy --name release-approvals \
-      --kind approval --rule '{"approvers":["esteban"],"scope":"release:*"}'
+      --kind approval --rule '{"approvers":["changeme"],"scope":"release:*"}'
 
 ## Backup / restore (drilled 2026-08-17)
 

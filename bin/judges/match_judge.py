@@ -1,15 +1,27 @@
-"""DSPy program for the card-prioritizer judge.
+"""DSPy program for the pair-wheel judge.
 
 Replaces the hand-rolled httpx + tool-calling code path. Same input contract
 (a card-shaped trace_payload), same output contract (verdict, confidence,
 rationale).
+
+The verdict enum is the DEFAULT PAIR RUBRIC'S, read from bin/judgement.py
+rather than restated here: a machine judge offering a vocabulary the rubric
+does not carry writes rows the swiss engine cannot score.
 """
 from __future__ import annotations
 from typing import Optional
 
 import dspy
 
+from bin import judgement as _judgement
 from bin import prompts as _prompts
+
+
+_PAIR_RUBRIC = _judgement.PAIR_WHEEL_TEMPLATE_DEFINITION
+
+
+def _verdict_desc() -> str:
+    return "Exactly one of: " + ", ".join(_PAIR_RUBRIC["verdict_enum"]) + "."
 
 
 class JudgeCardSig(dspy.Signature):
@@ -31,22 +43,11 @@ class JudgeCardSig(dspy.Signature):
 
     rationale = dspy.OutputField(desc="1–3 sentences. Reason about specificity, novelty, actionability, and impact.")
     confidence = dspy.OutputField(desc="One of: low, mid, high.")
-    verdict = dspy.OutputField(
-        desc=(
-            "Exactly one of: a-clearly-better, a-marginally-better, "
-            "tie-both-strong, tie-both-weak, b-marginally-better, "
-            "b-clearly-better, incoherent, skip."
-        )
-    )
+    verdict = dspy.OutputField(desc=_verdict_desc())
 
 
-VERDICT_ENUM = {
-    "a-clearly-better", "a-marginally-better",
-    "tie-both-strong", "tie-both-weak",
-    "b-marginally-better", "b-clearly-better",
-    "incoherent", "skip",
-}
-CONFIDENCE_ENUM = {"low", "mid", "high"}
+VERDICT_ENUM = set(_PAIR_RUBRIC["verdict_enum"])
+CONFIDENCE_ENUM = set(_PAIR_RUBRIC["confidence_enum"])
 
 
 class MatchJudge(dspy.Module):

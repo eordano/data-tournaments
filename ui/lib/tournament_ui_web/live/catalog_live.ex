@@ -210,6 +210,7 @@ defmodule TournamentUiWeb.CatalogLive do
     ~H"""
     <.workspace_page
       current={:environment}
+      flash={@flash}
       title={@project_name}
       subtitle="Project landscape: components, evidence sources, and captured snapshots."
     >

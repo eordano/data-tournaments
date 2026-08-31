@@ -18,35 +18,41 @@ both pair slots.
 
 ## 2. The wheel: geometry signifies
 
-PairJudgement renders an 8-position compass. Position IS meaning:
+PairJudgement renders a compass. Position IS meaning:
 
          NW                N                NE
-   a-slightly-better  tie-both-important  b-slightly-better
+       a-wins             tie             b-wins
 
     W                 [ A   vs   B ]            E
-   a-strongly-better    (center legend)   b-strongly-better
+     a-wins-big         (center legend)     b-wins-big
 
          SW                S                SE
-   a-lean-both-invalid  neither-good   b-lean-both-invalid
+      discard-a         (empty)          discard-b
 
-Axes: vertical = joint quality (up: both matter, down: both bad);
-horizontal = preference direction (left A, right B); diagonals mix them.
-- N  tie-both-important — a tie worth flagging: both deserve to survive
-- NE/NW slight preference, both acceptable
-- E/W  strong preference
-- SE/SW slight preference for B/A even though the pair is weak/invalid —
-  distinguishes "both weak, but B is closer" from a flat tie
-- S  neither-good — reject both
+Axes: horizontal = which SIDE the verdict is about (left A, right B);
+vertical = what happens to that side (up: surface it ahead of the other,
+down: eject it from the pool).
+- N  tie — the order between them does not matter for scheduling
+- NE/NW a preference
+- E/W  a strong preference (magnitude is rubric signal; both win
+  magnitudes are worth the same three points)
+- SW/SE discard-a / discard-b — eject THAT side, permanently, leaving the
+  item beside it untouched
+- S  deliberately EMPTY. There is no "both are bad" verdict: the retired
+  south position (neither-good) ejected both cards at once, so one
+  malformed card destroyed the good card it was drawn against. A judge
+  facing two bad items discards the worse one; the other comes back.
 
 Declared in the template so UI stays data-driven:
 
-    output_definition.wheel: {"n": "tie-both-important", "ne": ..., ...}
+    output_definition.wheel: {"n": "tie", "ne": "b-wins", ...}
     (positions: n ne e se s sw w nw; wheel verdicts must be a subset of
     verdict_enum)
 
-skip / incoherent are OPERATIONAL actions, not directions: they stay in
-verdict_enum but off the wheel (separate controls). Keyboard: numpad
-geometry 7/8/9 = nw/n/ne, 4/6 = w/e, 1/2/3 = sw/s/se.
+skip is an OPERATIONAL action, not a direction: it stays in verdict_enum
+but off the wheel (separate control), and bin/swiss.py records NO result
+for it — no played count, no rank, both sides seated first next round.
+Keyboard: numpad geometry 7/8/9 = nw/n/ne, 4/6 = w/e, 1/2/3 = sw/s/se.
 
 SingleJudgement renders a vertical axis (data-driven the same way, wheel
 positions n/ne/se/s): strong-yes / yes / weak / invalid — exact names
@@ -84,7 +90,7 @@ Stored versioned + immutable once bound; changes create a new version.
 
     {"name": "branch-fix-review", "version": 1,
      "stages": [
-       {"key": "idea-compare",  "subject": "idea",      "judgement": "pair",   "rubric": "pair-wheel-v1"},
+       {"key": "idea-compare",  "subject": "idea",      "judgement": "pair",   "rubric": "pair-idea-wheel-v2"},
        {"key": "author",        "action": "branch_author"},
        {"key": "validate-each", "action": "branch_validation"},
        {"key": "execution-each","subject": "execution", "judgement": "single", "rubric": "single-execution-v1", "foreach": "branch"},
@@ -99,23 +105,30 @@ for kind + rubric. A generic DAG executor is explicitly out of scope.
 
 ## 5. Compatibility
 
-- card-prioritizer-v0 is historical; never reinterpret stored verdicts.
-  In particular tie-both-weak is NOT silently mapped to neither-good —
-  they are distinct stored semantics; old ratings keep their own labels.
-- New seeds: pair-wheel-v1, single-idea-v1, single-execution-v1.
+- card-prioritizer-v0/v1, pair-wheel-v1 and pair-idea-wheel-v1 are all
+  historical; never reinterpret stored verdicts. In particular
+  tie-both-weak is NOT silently mapped to anything — those are distinct
+  stored semantics and old ratings keep their own labels. bin/swiss.py
+  refuses a retired verdict outright rather than guessing at it, and
+  bin/judgement.py prints VOCABULARY_RESET_NOTICE on a database that
+  holds any of them.
+- The vocabulary change RENAMED the rubric rather than bumping its
+  version: pair-wheel-v2 is a new rubric at version 1. A name that means
+  two different things depending on the version is discoverable only by
+  reading eval_template, and the name is hashed into pair_key, so the
+  rename invalidates every stored key — deliberately.
+- Current seeds: pair-wheel-v2, pair-idea-wheel-v2, single-idea-v1,
+  single-execution-v1.
 - One normalization helper maps legacy output_definitions to the v2
   shape (kind=pair, subjects=[execution], no wheel) — single code path.
 - Old ratings render unchanged in the UI (glyph fallback).
 
-Interpretation notes (flagged for cheap correction):
-- "up is tie on an important note" is read as "a tie between two artifacts
-  that BOTH matter" (tie-both-important). If it meant "tie requires a
-  written note", that is one config line: per-verdict rationale_required.
-- "45 down is slight preference for invalid a or b" is read as "the pair
-  is weak/invalid overall, but I lean A (SW) or B (SE)" — a-lean-both-invalid /
-  b-lean-both-invalid. Alternative reading: "prefer B because A is
-  invalid" (validity asymmetry). Both are one enum rename away; the UI
-  labels spell out the current reading so a correction is obvious.
-  DECISION 2026-08-18: user was asked, no answer in the window — shipped
-  with the "both weak, lean A/B" reading (S covers flat rejection);
-  flip = rename two enum values + two labels in pair-wheel-v2.
+Interpretation notes (superseded, kept so the change is legible):
+- The original wheel read the vertical axis as JOINT quality ("both
+  matter" up, "both bad" down), which is what produced neither-good and
+  the a/b-lean-both-invalid diagonals. That reading is retired: the
+  vertical axis now says what happens to the side the horizontal axis
+  names, and no verdict touches two items at once.
+- "up is tie on an important note" is now simply `tie`. If a tie should
+  require a written note, that is one config line: per-verdict
+  rationale_required.

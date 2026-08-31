@@ -17,19 +17,17 @@ from bin.landscape.canonical import content_digest
 from bin.landscape.evidence import EvidenceRef
 from bin.workorder import RepoSnapshot
 
-
 class FrozenRepoSnapshot(RepoSnapshot):
     """RepoSnapshot (reused from bin.workorder) frozen for use inside
     immutable landscape artifacts."""
 
     model_config = pydantic.ConfigDict(frozen=True)
 
-
 class LandscapeSnapshot(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(frozen=True)
 
     project: str
-    created_at: str = ""  # ISO-8601, stamped by the assembling system
+    created_at: str = ""
     evidence: tuple[EvidenceRef, ...] = ()
     repos: tuple[FrozenRepoSnapshot, ...] = ()
 

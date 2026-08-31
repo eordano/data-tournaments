@@ -11,10 +11,6 @@ from pathlib import Path
 
 import pytest
 
-
-# ── Git helpers (hermetic: no user/system config) ─────────────────────────
-
-
 def _env() -> dict:
     env = dict(os.environ)
     env.update(
@@ -27,7 +23,6 @@ def _env() -> dict:
     )
     return env
 
-
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -38,13 +33,11 @@ def _git(repo: Path, *args: str) -> str:
     )
     return proc.stdout.strip()
 
-
 def _commit(repo: Path, fname: str, content: str, msg: str) -> str:
     (repo / fname).write_text(content)
     _git(repo, "add", fname)
     _git(repo, "commit", "-m", msg)
     return _git(repo, "rev-parse", "HEAD")
-
 
 def _make_repo(root: Path) -> Path:
     repo = root / "repo"
@@ -58,16 +51,11 @@ def _make_repo(root: Path) -> Path:
     _commit(repo, "README.md", "hello\n", "initial")
     return repo
 
-
 def _make_fix_branch(repo: Path, name: str = "fix/widget") -> str:
     _git(repo, "checkout", "-b", name)
     sha = _commit(repo, "fix.txt", "the fix\n", "fix: widget")
     _git(repo, "checkout", "main")
     return sha
-
-
-# ── Fixtures ──────────────────────────────────────────────────────────────
-
 
 @pytest.fixture
 def fb(tmp_data_home):
@@ -76,18 +64,15 @@ def fb(tmp_data_home):
     mod.init()
     return mod
 
-
 @pytest.fixture
 def catalog(tmp_data_home):
     from bin import catalog as mod
 
     return mod
 
-
 @pytest.fixture
 def repo(tmp_path) -> Path:
     return _make_repo(tmp_path)
-
 
 @pytest.fixture
 def raw(tmp_data_home):
@@ -97,14 +82,12 @@ def raw(tmp_data_home):
     yield conn
     conn.close()
 
-
-def _policy(catalog, scope="branchfix:*", approvers=("esteban",)):
+def _policy(catalog, scope="branchfix:*", approvers=("changeme",)):
     return catalog.create_policy(
         name=f"approval-{scope}",
         kind="approval",
         rule={"approvers": list(approvers), "scope": scope},
     )
-
 
 def _validate_current(fb, bid, **overrides):
     """Record a passing validation of the branch's current head."""
@@ -123,7 +106,6 @@ def _validate_current(fb, bid, **overrides):
     kwargs.update(overrides)
     return fb.record_validation(bid, b["head_sha"], **kwargs)
 
-
 def _seed_workorder_ref(mod, ref: str) -> None:
     """Make ``ref`` resolvable as a domain name in the module's DB
     (strict-lineage tests, wave-11 W2)."""
@@ -134,10 +116,6 @@ def _seed_workorder_ref(mod, ref: str) -> None:
             (ref,),
         )
         conn.commit()
-
-
-# ── Schema ─────────────────────────────────────────────────────────────────
-
 
 class TestSchema:
     def test_tables_and_triggers_exist(self, fb, raw):
@@ -169,16 +147,12 @@ class TestSchema:
     def test_review_rows_append_only(self, fb, repo, raw):
         _make_fix_branch(repo)
         bid = fb.register_branch(str(repo), "fix/widget")
-        fb.record_review(bid, reviewer="esteban", decision="reject",
+        fb.record_review(bid, reviewer="changeme", decision="reject",
                          rationale="nope")
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             raw.execute("UPDATE fix_branch_review SET decision='approve'")
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             raw.execute("DELETE FROM fix_branch_review")
-
-
-# ── Registration ──────────────────────────────────────────────────────────
-
 
 class TestRegister:
     def test_happy_path(self, fb, repo):
@@ -188,7 +162,7 @@ class TestRegister:
         bid = fb.register_branch(str(repo), "fix/widget", workorder_ref="wo-7")
         b = fb.get_branch(bid)
         assert b["head_sha"] == fix_sha
-        assert b["base_sha"] == main_sha  # merge-base with default branch
+        assert b["base_sha"] == main_sha
         assert b["status"] == "registered"
         assert b["workorder_ref"] == "wo-7"
         assert len(b["patch_digest"]) == 64
@@ -228,10 +202,6 @@ class TestRegister:
         with pytest.raises(ValueError, match="merge commits"):
             fb.register_branch(str(repo), "fix/merged")
 
-
-# ── Strict lineage (wave-11 W2) ────────────────────────────────────────────
-
-
 def _seed_finding(mod, slug="widget-crash") -> int:
     """Create project -> campaign -> finding; returns the finding id."""
     from bin import campaigns, catalog
@@ -240,7 +210,6 @@ def _seed_finding(mod, slug="widget-crash") -> int:
     campaigns.create_campaign(project="proj-lineage", name="camp-lineage",
                               kind="bugsweep")
     return campaigns.create_finding(campaign="camp-lineage", slug=slug)
-
 
 def _seed_pending(mod) -> int:
     """Insert eval_template -> job_configuration -> pending_judgement;
@@ -262,7 +231,6 @@ def _seed_pending(mod) -> int:
         )
         conn.commit()
         return cur.lastrowid
-
 
 class TestLineage:
     """register_branch fail-closed workorder_ref/finding resolution."""
@@ -339,10 +307,6 @@ class TestLineage:
         assert fb.get_branch(bid)["workorder_ref"] == \
             "unresolved-ref:wo-cli-dangling"
 
-
-# ── Refresh / staleness ───────────────────────────────────────────────────
-
-
 class TestRefresh:
     def test_unchanged_head_is_noop(self, fb, repo):
         _make_fix_branch(repo)
@@ -356,7 +320,6 @@ class TestRefresh:
         _validate_current(fb, bid)
         assert fb.get_branch(bid)["status"] == "validated"
         assert fb.current_validation(bid) is not None
-        # amend (force-push equivalent: history rewrite moves the tip)
         _git(repo, "checkout", "fix/widget")
         (repo / "fix.txt").write_text("the better fix\n")
         _git(repo, "add", "fix.txt")
@@ -365,7 +328,6 @@ class TestRefresh:
         b = fb.refresh_head(bid)
         assert b["head_sha"] != old_sha
         assert b["status"] == "stale"
-        # the old validation row survives in history but is NOT current
         assert len(b["validations"]) == 1
         assert fb.current_validation(bid) is None
 
@@ -389,10 +351,6 @@ class TestRefresh:
         _git(repo, "checkout", "main")
         with pytest.raises(ValueError, match="merge commits"):
             fb.refresh_head(bid)
-
-
-# ── Validation rows ───────────────────────────────────────────────────────
-
 
 class TestRecordValidation:
     def test_wrong_tested_sha_refused(self, fb, repo):
@@ -419,17 +377,13 @@ class TestRecordValidation:
         assert cv["id"] == vid2 and cv["passed"] == 1
         assert fb.get_branch(bid)["status"] == "validated"
 
-
-# ── Reviews / approval gate ───────────────────────────────────────────────
-
-
 class TestReview:
     def test_approve_without_current_passed_validation_raises(self, fb, repo, catalog):
         _make_fix_branch(repo)
         bid = fb.register_branch(str(repo), "fix/widget")
         _policy(catalog)
         with pytest.raises(ValueError, match="approve requires a passed validation"):
-            fb.record_review(bid, reviewer="esteban", decision="approve")
+            fb.record_review(bid, reviewer="changeme", decision="approve")
 
     def test_approve_with_failed_validation_raises(self, fb, repo, catalog):
         _make_fix_branch(repo)
@@ -437,7 +391,7 @@ class TestReview:
         _validate_current(fb, bid, passed=False)
         _policy(catalog)
         with pytest.raises(ValueError, match="approve requires a passed validation"):
-            fb.record_review(bid, reviewer="esteban", decision="approve")
+            fb.record_review(bid, reviewer="changeme", decision="approve")
 
     def test_approve_without_policy_fails_closed(self, fb, repo):
         from bin.approvals import ApprovalDenied
@@ -446,8 +400,7 @@ class TestReview:
         bid = fb.register_branch(str(repo), "fix/widget")
         _validate_current(fb, bid)
         with pytest.raises(ApprovalDenied):
-            fb.record_review(bid, reviewer="esteban", decision="approve")
-        # fail closed: no review row, status unchanged
+            fb.record_review(bid, reviewer="changeme", decision="approve")
         b = fb.get_branch(bid)
         assert b["reviews"] == []
         assert b["status"] == "validated"
@@ -458,7 +411,7 @@ class TestReview:
         _validate_current(fb, bid)
         _policy(catalog, scope="branchfix:*")
         res = fb.record_review(
-            bid, reviewer="esteban", decision="approve", rationale="lgtm"
+            bid, reviewer="changeme", decision="approve", rationale="lgtm"
         )
         assert res["approval_event_id"] is not None
         b = fb.get_branch(bid)
@@ -471,7 +424,7 @@ class TestReview:
         ).fetchone()
         assert ev is not None
         assert ev["decision"] == "approved"
-        assert ev["approver"] == "esteban"
+        assert ev["approver"] == "changeme"
         wf = f"branchfix:fix/widget:{b['head_sha'][:12]}"
         assert ev["temporal_workflow_id"] == wf
 
@@ -481,16 +434,16 @@ class TestReview:
         _make_fix_branch(repo)
         bid = fb.register_branch(str(repo), "fix/widget")
         _validate_current(fb, bid)
-        _policy(catalog, scope="release:*")  # wrong scope
+        _policy(catalog, scope="release:*")
         with pytest.raises(ApprovalDenied):
-            fb.record_review(bid, reviewer="esteban", decision="approve")
+            fb.record_review(bid, reviewer="changeme", decision="approve")
 
     def test_reject_on_failed_branch_ok(self, fb, repo):
         _make_fix_branch(repo)
         bid = fb.register_branch(str(repo), "fix/widget")
         _validate_current(fb, bid, passed=False)
         res = fb.record_review(
-            bid, reviewer="esteban", decision="reject", rationale="wrong approach"
+            bid, reviewer="changeme", decision="reject", rationale="wrong approach"
         )
         assert res["approval_event_id"] is None
         assert fb.get_branch(bid)["status"] == "rejected"
@@ -499,7 +452,7 @@ class TestReview:
         _make_fix_branch(repo)
         bid = fb.register_branch(str(repo), "fix/widget")
         _validate_current(fb, bid)
-        fb.record_review(bid, reviewer="esteban", decision="needs-changes",
+        fb.record_review(bid, reviewer="changeme", decision="needs-changes",
                          rationale="rename the helper")
         assert fb.get_branch(bid)["status"] == "validated"
 
@@ -510,7 +463,7 @@ class TestReview:
         bid = fb.register_branch(str(repo), "fix/widget")
         _validate_current(fb, bid)
         _policy(catalog)
-        res = fb.record_review(bid, reviewer="esteban", decision="approve")
+        res = fb.record_review(bid, reviewer="changeme", decision="approve")
         assert fb.get_branch(bid)["status"] == "approved"
         approved_sha = fb.get_branch(bid)["head_sha"]
         _git(repo, "checkout", "fix/widget")
@@ -519,16 +472,11 @@ class TestReview:
         b = fb.refresh_head(bid)
         assert b["status"] == "stale"
         assert b["head_sha"] != approved_sha
-        # approval retained in history, bound to the OLD sha
         assert len(b["reviews"]) == 1
         assert b["reviews"][0]["decision"] == "approve"
         assert b["reviews"][0]["tested_sha"] == approved_sha
         assert b["reviews"][0]["approval_event_id"] == res["approval_event_id"]
         assert fb.current_validation(bid) is None
-
-
-# ── Queries ───────────────────────────────────────────────────────────────
-
 
 class TestDiffs:
     """Content-addressed diffs (wave-10 V2): register/refresh store the
@@ -543,11 +491,9 @@ class TestDiffs:
         patch_file = tmp_data_home / "branch-diffs" / f"{b['patch_digest']}.patch"
         assert patch_file.exists()
         text = patch_file.read_text()
-        # content matches git's own diff of the recorded range
         expected = _git(repo, "diff", f"{b['base_sha']}..{b['head_sha']}")
         assert text.strip() == expected.strip()
         assert "fix.txt" in text
-        # content-addressed: file body hashes to its own name
         import hashlib
 
         assert hashlib.sha256(patch_file.read_bytes()).hexdigest() == \
@@ -583,7 +529,6 @@ class TestDiffs:
         assert b["diff"] is not None and "more.txt" in b["diff"]
         assert {"status": "A", "path": "more.txt"} in b["changed_files"]
 
-
 class TestMarkShipped:
     def test_only_approved_can_ship(self, fb, repo):
         _make_fix_branch(repo)
@@ -597,13 +542,11 @@ class TestMarkShipped:
         bid = fb.register_branch(str(repo), "fix/widget")
         _validate_current(fb, bid)
         _policy(catalog)
-        fb.record_review(bid, reviewer="esteban", decision="approve")
+        fb.record_review(bid, reviewer="changeme", decision="approve")
         fb.mark_shipped(bid)
         assert fb.get_branch(bid)["status"] == "shipped"
-        # terminal: cannot ship twice
         with pytest.raises(ValueError, match="only an approved branch"):
             fb.mark_shipped(bid)
-
 
 class TestShipState:
     """mark_shipping / latest_ship / set_ship_outcome (wave-11 W2)."""
@@ -613,21 +556,20 @@ class TestShipState:
         bid = fb.register_branch(str(repo), "fix/widget")
         _validate_current(fb, bid)
         _policy(catalog)
-        fb.record_review(bid, reviewer="esteban", decision="approve")
+        fb.record_review(bid, reviewer="changeme", decision="approve")
         return bid
 
     def test_mark_shipping_records_row(self, fb, repo, catalog, raw):
         bid = self._approved(fb, catalog, repo)
         head = fb.get_branch(bid)["head_sha"]
         sid = fb.mark_shipping(bid, workflow_id="release:o/r:abc",
-                               tested_sha=head, requested_by="esteban")
+                               tested_sha=head, requested_by="changeme")
         assert fb.get_branch(bid)["status"] == "shipping"
         row = fb.latest_ship(bid)
         assert row["id"] == sid
         assert row["workflow_id"] == "release:o/r:abc"
         assert row["tested_sha"] == head
-        assert row["requested_by"] == "esteban"
-        # append-only, trigger-guarded
+        assert row["requested_by"] == "changeme"
         import sqlite3 as _sq
 
         with pytest.raises(_sq.IntegrityError, match="immutable"):
@@ -640,17 +582,16 @@ class TestShipState:
         bid = fb.register_branch(str(repo), "fix/widget")
         with pytest.raises(ValueError, match="only an approved branch"):
             fb.mark_shipping(bid, workflow_id="w", tested_sha="s",
-                             requested_by="esteban")
+                             requested_by="changeme")
         assert fb.latest_ship(bid) is None
 
     def test_set_ship_outcome_shipped_and_rolled_back(self, fb, repo, catalog):
         bid = self._approved(fb, catalog, repo)
         head = fb.get_branch(bid)["head_sha"]
         fb.mark_shipping(bid, workflow_id="w1", tested_sha=head,
-                         requested_by="esteban")
+                         requested_by="changeme")
         fb.set_ship_outcome(bid, "shipped")
         assert fb.get_branch(bid)["status"] == "shipped"
-        # only a 'shipping' row may transition
         with pytest.raises(ValueError, match="only a shipping branch"):
             fb.set_ship_outcome(bid, "rolled-back")
 
@@ -658,7 +599,6 @@ class TestShipState:
         bid = self._approved(fb, catalog, repo)
         with pytest.raises(ValueError, match="'shipped' or 'rolled-back'"):
             fb.set_ship_outcome(bid, "party")
-
 
 class TestQueries:
     def test_list_branches_filters(self, fb, repo):

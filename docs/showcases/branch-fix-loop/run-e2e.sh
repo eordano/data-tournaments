@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# End-to-end driver for the branch-fix loop showcase (wave-9 E2).
-#
-# Prereqs: branch-fix spine landed (05562e2), UI landed (5758b57),
-# Temporal dev server on :7233 for the post-decision stage.
-#
-# Usage: run-e2e.sh <data-home> <fixture-repo-dir>
-# Produces: artifacts under docs/showcases/branch-fix-loop/artifacts/
-#
-# HONEST-STATUS DISCIPLINE: every step prints a REAL/FIXTURE/DRY-RUN tag.
-# set -e: a partial run must never masquerade as a full one.
 set -euo pipefail
 
 HOME_DIR="${1:?usage: run-e2e.sh <data-home> <fixture-repo>}"
@@ -31,12 +21,10 @@ python3 bin/catalog.py create-project --name bfl \
 python3 bin/campaigns.py create-campaign --project bfl --name bfl-retry --kind bugsweep \
   --objective "Fix the carried-deadline retry bug; validate every fix branch independently" \
   --base-commit "$(git -C "$REPO" rev-parse main)"
-# Developer decisions on branches + release approvals — both fail-closed
-# until these policies exist (proven live in the baseline run).
 python3 bin/catalog.py create-policy --name branchfix-approvals --kind approval \
-  --rule '{"approvers": ["esteban"], "scope": "branchfix:*"}'
+  --rule '{"approvers": ["changeme"], "scope": "branchfix:*"}'
 python3 bin/catalog.py create-policy --name release-approvals --kind approval \
-  --rule '{"approvers": ["esteban"], "scope": "release:*"}'
+  --rule '{"approvers": ["changeme"], "scope": "release:*"}'
 
 step "1. finding + dossier [REAL LOCAL]"
 FINDING_ID=$(python3 bin/campaigns.py create-finding --campaign bfl-retry \

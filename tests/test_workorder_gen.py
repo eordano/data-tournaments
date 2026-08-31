@@ -9,7 +9,6 @@ import pytest
 
 from tests.conftest import _scripted_lm
 
-
 def _add_prompt(fake_langfuse, monkeypatch, text="Extract work orders."):
     fake_langfuse.add_prompt(
         "card-generator:wo", text=text, version=1, labels=["production"]
@@ -17,7 +16,6 @@ def _add_prompt(fake_langfuse, monkeypatch, text="Extract work orders."):
     monkeypatch.setattr(
         "bin.prompts._client_factory", lambda: fake_langfuse.as_client()
     )
-
 
 def test_workorder_gen_appends_contract_to_prompt(fake_langfuse, monkeypatch):
     _add_prompt(fake_langfuse, monkeypatch, text="Domain-specific brief.")
@@ -28,7 +26,6 @@ def test_workorder_gen_appends_contract_to_prompt(fake_langfuse, monkeypatch):
     assert "Domain-specific brief." in instructions
     assert "work_orders" in instructions
     assert "Never invent links, requesters, reviewers, commits, or dates" in instructions
-
 
 def test_workorder_gen_forward_returns_drafts(fake_langfuse, monkeypatch):
     _add_prompt(fake_langfuse, monkeypatch)
@@ -59,10 +56,8 @@ def test_workorder_gen_forward_returns_drafts(fake_langfuse, monkeypatch):
     assert isinstance(draft, WorkOrderDraft)
     assert draft.work_type == "bug-fix"
     assert draft.priority == "P1"
-    # Draft has no provenance fields at all.
     assert not hasattr(draft, "domain")
     assert not hasattr(draft, "created_at")
-
 
 def test_workorder_gen_invalid_item_is_parse_error(fake_langfuse, monkeypatch):
     _add_prompt(fake_langfuse, monkeypatch)
@@ -73,14 +68,8 @@ def test_workorder_gen_invalid_item_is_parse_error(fake_langfuse, monkeypatch):
     from bin.generators.workorder_gen import WorkOrderGen
 
     g = WorkOrderGen(prompt_name="card-generator:wo")
-    # dspy's typed adapter validates list[WorkOrderDraft] during parsing, so
-    # the invalid item surfaces as an AdapterParseError which forward()
-    # classifies as CardGenParseError. Either message shape is acceptable —
-    # what matters is the failure class: the item is failed, never silently
-    # dropped or repaired.
     with pytest.raises(CardGenParseError):
         g(corpus_text="anything")
-
 
 def test_workorder_gen_empty_list_is_valid(fake_langfuse, monkeypatch):
     _add_prompt(fake_langfuse, monkeypatch)

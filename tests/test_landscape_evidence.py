@@ -12,7 +12,6 @@ from bin.landscape.evidence import (
     TrustTier,
 )
 
-
 def make_ref(**overrides) -> EvidenceRef:
     base = dict(
         source_type=SourceType.GITHUB_ISSUE,
@@ -31,7 +30,6 @@ def make_ref(**overrides) -> EvidenceRef:
     base.update(overrides)
     return EvidenceRef(**base)
 
-
 class TestEnums:
     def test_source_type_values(self):
         assert {s.value for s in SourceType} == {
@@ -44,12 +42,11 @@ class TestEnums:
             "tier1_system", "tier2_internal", "tier3_external",
         ]
 
-
 class TestEvidenceRef:
     def test_id_is_content_derived(self):
         ref = make_ref()
         assert ref.id == "ev-" + ref.digest[:16]
-        assert ref.digest == make_ref().digest  # same content, same identity
+        assert ref.digest == make_ref().digest
 
     def test_changed_excerpt_changes_digest_and_id(self):
         a, b = make_ref(), make_ref(excerpt="different text")
@@ -104,7 +101,6 @@ class TestEvidenceRef:
             "authorized", "authorization", "auth", "approval_state",
         }
         assert not forbidden & set(EvidenceRef.model_fields)
-
 
 class TestBrowsableLink:
     def test_https_only(self):

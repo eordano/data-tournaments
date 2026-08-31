@@ -13,16 +13,16 @@ let
   cfg = config.services.data-tournaments;
   repoEtc = "/etc/data-tournaments/repo";
   stateDir = "/var/lib/data-tournaments";
-  # v1: Temporal release-workflow (approvals) is disabled — no Temporal server
-  # and no temporalio in pythonEnv. The stub fails loudly instead of hanging.
   releaseClientStub = pkgs.writeShellScript "dt-release-client-disabled" ''
     echo "data-tournaments: temporal release workflow is disabled on this deployment" >&2
     exit 69
   '';
-  # SECRET_KEY_BASE (Phoenix cookie/session signing) is generated once on
-  # first start and persisted in the state directory, so the service needs no
-  # pre-provisioned secret. cfg.environmentFile is loaded afterwards and can
-  # override it or add API keys.
+  browseRoots = [
+    stateDir
+    repoEtc
+  ]
+  ++ cfg.browseRoots;
+  needsHomeTmpfs = lib.any (p: p == "/home" || lib.hasPrefix "/home/" p) cfg.browseRoots;
   secretEnvFile = "${stateDir}/secret-env";
   generateSecretEnv = pkgs.writeShellScript "data-tournaments-secret-env" ''
     set -eu
@@ -46,13 +46,13 @@ in
 
     host = lib.mkOption {
       type = lib.types.str;
-      default = "workflows.decent.dev";
+      default = "workflows.example.com";
       description = "Public hostname (PHX_HOST; url scheme/port are https/443).";
     };
 
     operator = lib.mkOption {
       type = lib.types.str;
-      default = "eordano";
+      default = "changeme";
       description = "DT_OPERATOR identity gating runs, branch fixes and judgement revision.";
     };
 
@@ -62,7 +62,7 @@ in
       description = ''
         Optional systemd EnvironmentFile providing LANGFUSE_HOST /
         LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / OPENROUTER_API_KEY /
-        LLM_BASE_URL / LLM_GATEWAY_API_KEY, or overriding the auto-generated
+        LLM_BASE_URL / LLM_HJKL_API_KEY, or overriding the auto-generated
         SECRET_KEY_BASE.
       '';
     };
@@ -78,12 +78,31 @@ in
       default = { };
       description = "Extra environment variables merged into the unit (e.g. PROMPT_BACKEND).";
     };
+
+    browseRoots = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "/home/alice/workspaces/unity-explorer" ];
+      description = ''
+        Host directories bind-mounted read-only into the unit's namespace and
+        appended to TOURNAMENT_BROWSE_ROOTS, on top of the state directory and
+        the /etc repo mirror. Each bind is "-" prefixed, so a root that
+        disappears does not keep the unit from starting.
+      '';
+    };
+
+    supplementaryGroups = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "dcl" ];
+      description = ''
+        Groups the DynamicUser joins, so a browse root whose owning directory
+        is group-readable rather than world-readable can still be traversed.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
-    # Stable, non-store path baked into the release at compile time and used
-    # as WorkingDirectory so the LiveViews' default `python3 bin/<x>.py`
-    # shell-outs resolve. Read-only: all writes go to DATA_TOURNAMENTS_HOME.
     environment.etc."data-tournaments/repo".source = repoRoot;
 
     systemd.services.data-tournaments = {
@@ -92,8 +111,6 @@ in
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
 
-      # python3 with langfuse/dspy/gepa for the CLI shell-outs; sqlite for
-      # ad-hoc CLI use inside scripts.
       path = [
         pythonEnv
         pkgs.bash
@@ -106,9 +123,6 @@ in
         PORT = toString cfg.port;
         PHX_HOST = cfg.host;
         RELEASE_DISTRIBUTION = "none";
-        # The package strips releases/COOKIE (removeCookie); the release
-        # script still `cat`s it when RELEASE_COOKIE is unset and dies.
-        # Distribution is off, so any value works.
         RELEASE_COOKIE = "no-distribution";
         RELEASE_TMP = "${stateDir}/tmp";
         HOME = stateDir;
@@ -124,6 +138,7 @@ in
         GENERATE_CARDS_SCRIPT = "${repoEtc}/bin/generate_cards.py";
         DT_OPERATOR = cfg.operator;
         DT_RELEASE_CLIENT_CMD = "${releaseClientStub}";
+        TOURNAMENT_BROWSE_ROOTS = lib.concatStringsSep ":" browseRoots;
       }
       // cfg.extraEnvironment;
 
@@ -137,19 +152,16 @@ in
         StateDirectory = "data-tournaments";
         StateDirectoryMode = "0750";
         EnvironmentFile = [
-          # "-": tolerated as missing at unit load; ExecStartPre creates it
-          # before ExecStart's environment is assembled.
           "-${secretEnvFile}"
         ]
         ++ lib.optional (cfg.environmentFile != null) cfg.environmentFile;
 
-        # butterfly-effect-style hardening, minus IPAddressDeny (the app and
-        # its python shell-outs call Langfuse/OpenRouter over the network)
-        # and minus MemoryDenyWriteExecute (BEAM JIT).
         NoNewPrivileges = true;
         PrivateTmp = true;
         ProtectSystem = "strict";
-        ProtectHome = true;
+        ProtectHome = if needsHomeTmpfs then "tmpfs" else true;
+        BindReadOnlyPaths = map (p: "-${p}") cfg.browseRoots;
+        SupplementaryGroups = cfg.supplementaryGroups;
         PrivateDevices = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;

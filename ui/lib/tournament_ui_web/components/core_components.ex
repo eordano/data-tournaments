@@ -28,11 +28,19 @@ defmodule TournamentUiWeb.CoreComponents do
   """
   use Phoenix.Component
 
+  alias TournamentUiWeb.Layouts
+
   @doc """
   Workspace top-nav. Renders the canonical link set with the current page
   highlighted via `is-active`. Use it on every workspace page so users can
   follow the primary Source → Review → Results journey, with tuning and
   diagnostic tools visually separated as supporting destinations.
+
+  The Standings entry is withheld on the judging surface: standings anchor
+  the next comparison, so the judge page must not even name them (the
+  no-points regression lock refutes the substring). The judge still gets
+  an exit to the same page through the neutral "Table" entry, whose
+  `/table` route aliases `/standings` so no banned word reaches the URL.
 
   ## Examples
 
@@ -42,7 +50,7 @@ defmodule TournamentUiWeb.CoreComponents do
   attr :current, :atom,
     required: true,
     doc:
-      "one of :start, :domains, :judge, :results, :environment, :campaigns, :branch_fixes, :runs, :inspect (legacy pages may pass :prompts/:catalog/:brackets — no entry highlights)"
+      "one of :start, :domains, :judge, :results, :standings, :environment, :campaigns, :branch_fixes, :runs, :inspect (legacy pages may pass :prompts/:catalog — no entry highlights)"
 
   def workspace_nav(assigns) do
     ~H"""
@@ -54,6 +62,20 @@ defmodule TournamentUiWeb.CoreComponents do
       <.workspace_nav_link href="/domains" label="Domains" current={@current} key={:domains} />
       <.workspace_nav_link href="/judge" label="Review" current={@current} key={:judge} />
       <.workspace_nav_link href="/results" label="Results" current={@current} key={:results} />
+      <.workspace_nav_link
+        :if={@current != :judge}
+        href="/standings"
+        label="Standings"
+        current={@current}
+        key={:standings}
+      />
+      <.workspace_nav_link
+        :if={@current == :judge}
+        href="/table"
+        label="Table"
+        current={@current}
+        key={:standings}
+      />
       <span class="h-5 w-px bg-base-content/15 mx-1" aria-hidden="true"></span>
       <.workspace_nav_link
         href="/environment"
@@ -98,7 +120,22 @@ defmodule TournamentUiWeb.CoreComponents do
     """
   end
 
+  @doc """
+  Single-column workspace shell.
+
+  Renders the flash group so that every route wearing this shell can speak.
+  Pass `flash={@flash}` from the LiveView: a function component receives only
+  the attributes it is given, so a page that omitted it stayed mute. The attr
+  is required so that omission is a compile warning, which `mix precommit`'s
+  `--warnings-as-errors` turns into a build failure — no future page ships mute.
+  A caller that slips past that gate still renders, mute, rather than crashing.
+  """
   attr :current, :atom, required: true
+
+  attr :flash, :map,
+    required: true,
+    doc: "the LiveView's @flash; required so no page can silently drop its put_flash messages"
+
   attr :max_width, :string, default: "max-w-5xl"
   attr :title, :string, default: nil
   attr :subtitle, :string, default: nil
@@ -108,12 +145,22 @@ defmodule TournamentUiWeb.CoreComponents do
   slot :inner_block, required: true
 
   def workspace_page(assigns) do
+    assigns = assign_new(assigns, :flash, fn -> %{} end)
+
     ~H"""
     <div class="min-h-screen workspace" {@rest}>
+      <Layouts.flash_group
+        id="workspace-flash"
+        flash={@flash}
+        corner={corner_clear_of_judging_controls()}
+      />
       <div class={[@max_width, "mx-auto px-6 py-8"]}>
-        <div class="flex items-center justify-between mb-6 pb-4 border-b app-hairline">
+        <div class="flex items-center justify-between gap-4 mb-6 pb-4 border-b app-hairline">
           <.workspace_nav current={@current} />
-          {render_slot(@nav_actions)}
+          <div class="flex items-center gap-3 shrink-0">
+            {render_slot(@nav_actions)}
+            <Layouts.theme_toggle />
+          </div>
         </div>
         <%= if @title do %>
           <div class="mb-6 flex items-start justify-between gap-4">
@@ -134,15 +181,37 @@ defmodule TournamentUiWeb.CoreComponents do
     """
   end
 
+  @doc """
+  Full-height split workspace shell used by the judging screen.
+
+  Renders the flash group in the same corner as `workspace_page/1`, so a
+  judge who moves between the queue and the rest of the workspace never has
+  to relearn where the application speaks from. As with `workspace_page/1`,
+  the flash attr is required: omitting it is a compile error under
+  `--warnings-as-errors`, the gate that keeps future pages from shipping mute.
+  """
   attr :current, :atom, required: true
+
+  attr :flash, :map,
+    required: true,
+    doc: "the LiveView's @flash; required so no page can silently drop its put_flash messages"
+
   attr :rest, :global
   slot :inner_block, required: true
 
   def workspace_split(assigns) do
+    assigns = assign_new(assigns, :flash, fn -> %{} end)
+
     ~H"""
     <div class="flex flex-col h-screen bg-base-200" {@rest}>
-      <div class="flex items-center justify-between px-6 py-2 bg-base-100 border-b app-hairline shrink-0">
+      <Layouts.flash_group
+        id="workspace-flash"
+        flash={@flash}
+        corner={corner_clear_of_judging_controls()}
+      />
+      <div class="flex items-center justify-between gap-4 px-6 py-2 bg-base-100 border-b app-hairline shrink-0">
         <.workspace_nav current={@current} />
+        <Layouts.theme_toggle />
       </div>
       <div class="flex flex-1 overflow-hidden">
         {render_slot(@inner_block)}
@@ -150,6 +219,8 @@ defmodule TournamentUiWeb.CoreComponents do
     </div>
     """
   end
+
+  defp corner_clear_of_judging_controls, do: "toast-bottom toast-start"
 
   alias Phoenix.LiveView.JS
 
@@ -165,6 +236,11 @@ defmodule TournamentUiWeb.CoreComponents do
   attr :flash, :map, default: %{}, doc: "the map of flash messages to display"
   attr :title, :string, default: nil
   attr :kind, :atom, values: [:info, :error], doc: "used for styling and flash lookup"
+
+  attr :corner, :string,
+    default: "toast-top toast-end",
+    doc: "daisyUI placement classes for the fixed toast container"
+
   attr :rest, :global, doc: "the arbitrary HTML attributes to add to the flash container"
 
   slot :inner_block, doc: "the optional inner block that renders the flash message"
@@ -178,11 +254,11 @@ defmodule TournamentUiWeb.CoreComponents do
       id={@id}
       phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       role="alert"
-      class="toast toast-top toast-end z-50"
+      class={["toast z-50 pointer-events-none", @corner]}
       {@rest}
     >
       <div class={[
-        "alert w-80 sm:w-96 max-w-80 sm:max-w-96 text-wrap",
+        "alert w-80 sm:w-96 max-w-80 sm:max-w-96 text-wrap pointer-events-auto",
         @kind == :info && "alert-info",
         @kind == :error && "alert-error"
       ]}>

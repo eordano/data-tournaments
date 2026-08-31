@@ -5,13 +5,13 @@ commands are tiny shell scripts printing the parseable conventions
 """
 from __future__ import annotations
 
-import subprocess
+import sqlite3
+import uuid
 from pathlib import Path
 
 import pytest
 
-from tests.test_fix_branches import _commit, _env, _git, _make_repo
-
+from tests.test_fix_branches import _commit, _git, _make_repo
 
 @pytest.fixture
 def fb(tmp_data_home):
@@ -20,25 +20,21 @@ def fb(tmp_data_home):
     mod.init()
     return mod
 
-
 @pytest.fixture
 def validator(fb):
     from bin import branch_validator as mod
 
     return mod
 
-
 @pytest.fixture
 def repo(tmp_path) -> Path:
     return _make_repo(tmp_path)
-
 
 def _script(repo: Path, name: str, line: str) -> None:
     path = repo / name
     path.write_text(f"#!/bin/sh\necho '{line}'\n")
     path.chmod(0o755)
     _git(repo, "add", name)
-
 
 def _fixture_branch(repo: Path, name: str, *, guard_line: str) -> str:
     """A fix branch carrying its own red/green/guard scripts."""
@@ -53,12 +49,9 @@ def _fixture_branch(repo: Path, name: str, *, guard_line: str) -> str:
     _git(repo, "checkout", "main")
     return sha
 
-
 def _no_worktrees_left(repo: Path) -> bool:
     out = _git(repo, "worktree", "list", "--porcelain")
-    # only the main worktree remains
     return out.count("worktree ") == 1
-
 
 class TestValidateEndToEnd:
     def test_passing_branch(self, fb, validator, repo, tmp_path, tmp_data_home):
@@ -85,13 +78,11 @@ class TestValidateEndToEnd:
         assert cv["red_observed"] == 2 and cv["red_intended"] == 2
         assert cv["green_passed"] == 5 and cv["green_total"] == 5
         assert cv["guard_passed"] == 3 and cv["guard_total"] == 3
-        # log stored content-addressed; digest recorded
         from bin import catalog
 
         assert cv["log_digest"] == res["log_digest"]
         log = catalog.cas_read(cv["log_digest"])
         assert "RED 2/2" in log and "GREEN 5/5" in log and "GUARD 3/3" in log
-        # worktree ALWAYS removed
         assert _no_worktrees_left(repo)
 
     def test_failing_guard_branch(self, fb, validator, repo, tmp_path):
@@ -131,7 +122,7 @@ class TestValidateEndToEnd:
         bid = fb.register_branch(str(repo), "fix/silent")
         res = validator.validate(
             bid,
-            red_cmd="true",  # prints nothing
+            red_cmd="true",
             green_cmd="./green.sh",
             guard_cmd="./guard.sh",
             scratch_dir=str(tmp_path / "scratch"),
@@ -191,7 +182,7 @@ class TestValidateEndToEnd:
                 _git(repo, "checkout", "fix/racy")
                 _commit(repo, "late.txt", "late\n", "late commit")
                 _git(repo, "checkout", "main")
-                fb.refresh_head(bid)  # DB head moves past the worktree SHA
+                fb.refresh_head(bid)
             return real_run_leg(cmd, cwd)
 
         monkeypatch.setattr(validator, "_run_leg", move_tip_then_run)
@@ -226,10 +217,6 @@ class TestValidateEndToEnd:
         assert fb.get_branch(bid1)["status"] == "validated"
         assert fb.get_branch(bid2)["status"] == "failed"
 
-
-# ── Harness trust (wave-10 V2): the branch cannot grade itself ─────────────
-
-
 def _script_on_main(repo: Path, name: str, body: str) -> None:
     """Commit a harness script to MAIN (the base the harness is pinned to)."""
     path = repo / name
@@ -237,14 +224,12 @@ def _script_on_main(repo: Path, name: str, body: str) -> None:
     path.chmod(0o755)
     _git(repo, "add", name)
 
-
 def _base_with_harness(repo: Path) -> None:
     """Commit honest red/green/guard scripts to main."""
     _script_on_main(repo, "red.sh", "#!/bin/sh\necho 'RED 2/2'\n")
     _script_on_main(repo, "green.sh", "#!/bin/sh\necho 'GREEN 5/5'\n")
     _script_on_main(repo, "guard.sh", "#!/bin/sh\necho 'GUARD 3/3'\n")
     _git(repo, "commit", "-m", "harness: base scripts")
-
 
 class TestHarnessTrust:
     def test_tampered_guard_refused_before_execution(self, fb, validator,
@@ -275,7 +260,6 @@ class TestHarnessTrust:
         assert res["refused"] == "harness-tampered"
         assert res["tampered_paths"] == ["guard.sh"]
         assert res["harness_digest"] is None
-        # the tampered script NEVER executed
         assert not marker.exists()
         b = fb.get_branch(bid)
         assert b["status"] == "failed"
@@ -338,7 +322,6 @@ class TestHarnessTrust:
         _git(repo, "commit", "-m", "doctor the guard")
         _git(repo, "checkout", "main")
         bid = fb.register_branch(str(repo), "fix/doctored")
-        # blind the diff-based check — materialization must still hold
         monkeypatch.setattr(validator, "_tampered_paths",
                             lambda *a, **k: [])
         res = validator.validate(
@@ -346,7 +329,7 @@ class TestHarnessTrust:
             guard_cmd="./guard.sh", scratch_dir=str(tmp_path / "scratch"),
         )
         assert res["passed"] is False
-        assert res["guard"] == (2, 3)  # BASE guard ran, not the doctored one
+        assert res["guard"] == (2, 3)
         assert not marker.exists()
 
     def test_explicit_protected_paths(self, fb, validator, repo, tmp_path):
@@ -387,11 +370,6 @@ class TestHarnessTrust:
                 scratch_dir=str(tmp_path / "scratch"),
             )
 
-
-# ── Widened harness trust (wave-11 B): transitive discovery, manifest
-#    globs, expected-count pinning, cap ──────────────────────────────────
-
-
 def _base_with_indirect_harness(repo: Path) -> None:
     """Base whose red leg is INDIRECT: red.sh invokes 'python3
     inner_test.py' — the harness definition lives partly in the inner test
@@ -407,14 +385,12 @@ def _base_with_indirect_harness(repo: Path) -> None:
     _git(repo, "add", "pyproject.toml")
     _git(repo, "commit", "-m", "harness: indirect scripts + manifest")
 
-
 def _branch_touching(repo: Path, name: str, fname: str, content: str) -> None:
     _git(repo, "checkout", "-b", name)
     (repo / fname).write_text(content)
     _git(repo, "add", fname)
     _git(repo, "commit", "-m", f"{name}: edit {fname}")
     _git(repo, "checkout", "main")
-
 
 class TestWidenedHarnessTrust:
     def test_tampered_inner_test_source_refused(self, fb, validator, repo,
@@ -440,7 +416,7 @@ class TestWidenedHarnessTrust:
         assert res["refused"] == "harness-tampered"
         assert res["tampered_paths"] == ["inner_test.py"]
         assert res["protected_source"]["inner_test.py"] == "transitive"
-        assert not marker.exists()  # never executed
+        assert not marker.exists()
         assert fb.get_branch(bid)["status"] == "failed"
         from bin import catalog
 
@@ -514,7 +490,7 @@ class TestWidenedHarnessTrust:
             guard_cmd="./guard.sh", scratch_dir=str(tmp_path / "scratch"),
         )
         assert res["passed"] is True
-        assert res["red"] == (2, 2)  # inner test actually ran
+        assert res["red"] == (2, 2)
         assert res["protected_source"] == {
             "red.sh": "script",
             "green.sh": "script",
@@ -523,7 +499,6 @@ class TestWidenedHarnessTrust:
             "pyproject.toml": "manifest-glob",
         }
         assert res["protected_paths"] == sorted(res["protected_source"])
-        # digest covers the widened set, not just the scripts
         base_sha = fb.get_branch(bid)["base_sha"]
         old_way = validator._harness_digest(
             str(repo), base_sha, ["red.sh", "green.sh", "guard.sh"]
@@ -548,7 +523,7 @@ class TestWidenedHarnessTrust:
         res = validator.validate(
             bid, red_cmd="./red.sh", green_cmd="./green.sh",
             guard_cmd="./guard.sh",
-            expected={"red": (3, 3)},  # base harness prints RED 2/2
+            expected={"red": (3, 3)},
             scratch_dir=str(tmp_path / "scratch"),
         )
         assert res["passed"] is False
@@ -601,3 +576,612 @@ class TestWidenedHarnessTrust:
             )
         assert fb.current_validation(bid) is None
         assert _no_worktrees_left(repo)
+
+def _seed_ref(fb, ref: str) -> None:
+    with fb._connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO domain(name, generator_prompt, "
+            "judge_prompt, corpus_source) VALUES (?, '', '', '{}')",
+            (ref,),
+        )
+        conn.commit()
+
+PAIR_A = "a" * 64
+PAIR_B = "b" * 64
+PAIR_C = "c" * 64
+PAIR_D = "d" * 64
+UNJUDGED_PAIR = "e" * 64
+
+def _seed_pairs(fb, *keys: str) -> None:
+    """Record ``keys`` where judged pairs are recorded.
+
+    The validator refuses a pair key that names no judged pair, so a
+    standing built out of thin air has to say where its keys came from. The
+    dispatch ledger is one of the three places that counts: it is written at
+    claim time from the pool's live results.
+    """
+    from bin import dispatch
+
+    dispatch.init()
+    with fb._connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO work_dispatch(domain_id, dispatch_key, item_id, "
+            "pool_id, destination, outcome) "
+            "VALUES (0, ?, 'seeded-item', 'seeded-pool', 'branch-author', "
+            "'claimed')",
+            (uuid.uuid4().hex,),
+        )
+        conn.executemany(
+            "INSERT OR IGNORE INTO work_dispatch_pair(dispatch_id, pair_key) "
+            "VALUES (?, ?)",
+            [(cur.lastrowid, key) for key in keys],
+        )
+        conn.commit()
+
+def _standing(**overrides):
+    from bin.workorder import TournamentStanding
+
+    base = dict(
+        points=7,
+        played=3,
+        rank=1,
+        rounds=4,
+        pool_id="wave-13",
+        pair_keys=[PAIR_A, PAIR_B, PAIR_C],
+    )
+    base.update(overrides)
+    return TournamentStanding(**base)
+
+def _tournament_branch(fb, repo, name, ref, *, guard_line="GUARD 3/3"):
+    _fixture_branch(repo, name, guard_line=guard_line)
+    _seed_ref(fb, ref)
+    _seed_pairs(fb, PAIR_A, PAIR_B, PAIR_C, PAIR_D)
+    return fb.register_branch(str(repo), name, workorder_ref=ref)
+
+class TestRankingEvidence:
+    def test_ranking_evidence_records_outcome_against_pairs_and_standing(
+        self, fb, validator, repo, tmp_path
+    ):
+        bid = _tournament_branch(fb, repo, "fix/won-and-compiles", "wo-top")
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            guard_cmd="./guard.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(),
+        )
+        assert res["passed"] is True
+        assert res["ranking_evidence_id"] is not None
+
+        for pair_key in (PAIR_A, PAIR_B, PAIR_C):
+            joined = validator.evidence_for_pair(pair_key)
+            assert [row["id"] for row in joined] == [res["ranking_evidence_id"]]
+            assert joined[0]["outcome"] == "passed"
+            assert joined[0]["workorder_ref"] == "wo-top"
+            assert joined[0]["validation_id"] == res["validation_id"]
+            assert joined[0]["tested_sha"] == res["tested_sha"]
+
+    def test_ranking_evidence_query_returns_pool_triples(
+        self, fb, validator, repo, tmp_path
+    ):
+        winner = _tournament_branch(fb, repo, "fix/winner", "wo-winner")
+        loser = _tournament_branch(
+            fb, repo, "fix/loser", "wo-loser", guard_line="GUARD 1/3"
+        )
+        validator.validate(
+            winner,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            guard_cmd="./guard.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(rank=1, points=9, played=3),
+        )
+        validator.validate(
+            loser,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            guard_cmd="./guard.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(
+                rank=2, points=6, played=3, pair_keys=[PAIR_A, PAIR_D]
+            ),
+        )
+
+        triples = validator.ranking_evidence_for_pool("wave-13")
+        assert [
+            (t["workorder_ref"], t["standing"]["rank"], t["outcome"])
+            for t in triples
+        ] == [("wo-winner", 1, "passed"), ("wo-loser", 2, "failed")]
+        assert triples[0]["standing"]["points"] == 9
+        assert triples[0]["standing"]["pair_keys"] == sorted(
+            [PAIR_A, PAIR_B, PAIR_C]
+        )
+        assert triples[1]["standing"]["pair_keys"] == sorted([PAIR_A, PAIR_D])
+        assert validator.ranking_evidence_for_pool("other-pool") == []
+
+        shared = validator.evidence_for_pair(PAIR_A)
+        assert [row["workorder_ref"] for row in shared] == [
+            "wo-winner", "wo-loser"
+        ]
+
+    def test_ranking_evidence_records_a_harness_tampered_refusal(
+        self, fb, validator, repo, tmp_path
+    ):
+        _base_with_harness(repo)
+        _git(repo, "checkout", "-b", "fix/tamper")
+        (repo / "guard.sh").write_text("#!/bin/sh\necho 'GUARD 9/9'\n")
+        (repo / "fix.txt").write_text("fix\n")
+        _git(repo, "add", "guard.sh", "fix.txt")
+        _git(repo, "commit", "-m", "fix + tamper")
+        _git(repo, "checkout", "main")
+        _seed_ref(fb, "wo-tamper")
+        _seed_pairs(fb, PAIR_A, PAIR_B, PAIR_C)
+        bid = fb.register_branch(str(repo), "fix/tamper", workorder_ref="wo-tamper")
+
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            guard_cmd="./guard.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(pool_id="wave-14"),
+        )
+        assert res["refused"] == "harness-tampered"
+        triples = validator.ranking_evidence_for_pool("wave-14")
+        assert [t["outcome"] for t in triples] == ["refused"]
+
+    def test_ranking_evidence_needs_a_joinable_tournament_item(
+        self, fb, validator, repo, tmp_path
+    ):
+        _fixture_branch(repo, "fix/orphan", guard_line="GUARD 3/3")
+        _seed_pairs(fb, PAIR_A, PAIR_B, PAIR_C)
+        bid = fb.register_branch(str(repo), "fix/orphan")
+        with pytest.raises(ValueError, match="no workorder_ref"):
+            validator.validate(
+                bid,
+                red_cmd="./red.sh",
+                green_cmd="./green.sh",
+                scratch_dir=str(tmp_path / "scratch"),
+                standing=_standing(),
+            )
+        assert fb.current_validation(bid) is None
+
+        bid2 = _tournament_branch(fb, repo, "fix/no-pool", "wo-no-pool")
+        with pytest.raises(ValueError, match="pool_id"):
+            validator.validate(
+                bid2,
+                red_cmd="./red.sh",
+                green_cmd="./green.sh",
+                scratch_dir=str(tmp_path / "scratch"),
+                standing=_standing(pool_id=""),
+            )
+        assert fb.current_validation(bid2) is None
+        assert validator.ranking_evidence_for_pool("wave-13") == []
+
+    def test_ranking_evidence_is_optional_and_append_only(
+        self, fb, validator, repo, tmp_path
+    ):
+        bid = _tournament_branch(fb, repo, "fix/untracked", "wo-plain")
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+        )
+        assert res["ranking_evidence_id"] is None
+        assert validator.ranking_evidence_for_pool("wave-13") == []
+
+        bid2 = _tournament_branch(fb, repo, "fix/tracked", "wo-tracked")
+        validator.validate(
+            bid2,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(),
+        )
+        with fb._connect() as conn:
+            with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+                conn.execute("UPDATE ranking_evidence SET outcome='failed'")
+            with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+                conn.execute("DELETE FROM ranking_evidence")
+
+    def test_ranking_evidence_promotes_nothing_on_its_own(
+        self, fb, validator, repo, tmp_path
+    ):
+        bid = _tournament_branch(fb, repo, "fix/inert", "wo-inert")
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            guard_cmd="./guard.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(),
+        )
+        assert res["passed"] is True
+        with fb._connect() as conn:
+            counts = {
+                table: conn.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()[0]
+                for table in (
+                    "review_rule",
+                    "review_rule_proposal",
+                    "approval_event",
+                    "fix_branch_review",
+                    "fix_branch_ship",
+                )
+            }
+        assert counts == {
+            "review_rule": 0,
+            "review_rule_proposal": 0,
+            "approval_event": 0,
+            "fix_branch_review": 0,
+            "fix_branch_ship": 0,
+        }
+        assert fb.get_branch(bid)["status"] == "validated"
+
+class TestUnavailableReturnEdgeDegrades:
+    """A byed item holds no pair key — a bye is not a result and awards
+    none — so the join back to the judgements does not exist. That must
+    cost one evidence row's join, never the whole validation."""
+
+    def test_byed_item_with_no_pair_keys_is_still_validated(
+        self, fb, validator, repo, tmp_path
+    ):
+        bid = _tournament_branch(fb, repo, "fix/byed", "wo-byed")
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            guard_cmd="./guard.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(points=1, played=1, rank=4, pair_keys=[]),
+        )
+        assert res["passed"] is True
+        assert res["red"] == (2, 2)
+        assert res["green"] == (5, 5)
+        assert res["guard"] == (3, 3)
+        assert fb.get_branch(bid)["status"] == "validated"
+        assert fb.current_validation(bid)["passed"] == 1
+        assert _no_worktrees_left(repo)
+
+    def test_byed_outcome_records_why_it_could_not_be_joined(
+        self, fb, validator, repo, tmp_path
+    ):
+        bid = _tournament_branch(fb, repo, "fix/byed-detail", "wo-byed-detail")
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(points=1, played=1, rank=4, pair_keys=[]),
+        )
+        assert res["ranking_evidence_id"] is not None
+        assert res["ranking_evidence_join"] == "no-pair-keys"
+
+        with fb._connect() as conn:
+            row = conn.execute(
+                "SELECT outcome, join_status, join_detail, played, rank "
+                "FROM ranking_evidence WHERE id=?",
+                (res["ranking_evidence_id"],),
+            ).fetchone()
+            pair_rows = conn.execute(
+                "SELECT COUNT(*) FROM ranking_evidence_pair WHERE evidence_id=?",
+                (res["ranking_evidence_id"],),
+            ).fetchone()[0]
+        assert row["outcome"] == "passed"
+        assert row["join_status"] == "no-pair-keys"
+        assert row["played"] == 1 and row["rank"] == 4
+        assert "bye" in row["join_detail"]
+        assert pair_rows == 0
+
+    def test_unplayed_item_says_it_was_never_compared(
+        self, fb, validator, repo, tmp_path
+    ):
+        bid = _tournament_branch(fb, repo, "fix/unranked", "wo-unranked")
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(points=0, played=0, rank=0, pair_keys=[]),
+        )
+        assert res["passed"] is True
+        record = validator.ranking_evidence(res["ranking_evidence_id"])
+        assert record["join_status"] == "no-pair-keys"
+        assert record["joinable"] is False
+        assert record["pair_keys"] == []
+        assert "played no match" in record["join_detail"]
+
+    def test_degraded_and_joined_rows_are_distinguishable_in_one_pool(
+        self, fb, validator, repo, tmp_path
+    ):
+        joined = _tournament_branch(fb, repo, "fix/joined", "wo-joined")
+        byed = _tournament_branch(fb, repo, "fix/bye", "wo-bye")
+        validator.validate(
+            joined,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(rank=1, points=7, played=3),
+        )
+        validator.validate(
+            byed,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(rank=2, points=1, played=1, pair_keys=[]),
+        )
+
+        triples = validator.ranking_evidence_for_pool("wave-13")
+        assert [
+            (t["workorder_ref"], t["join_status"], t["pair_keys"])
+            for t in triples
+        ] == [
+            ("wo-joined", "joined", sorted([PAIR_A, PAIR_B, PAIR_C])),
+            ("wo-bye", "no-pair-keys", []),
+        ]
+        assert [t["joinable"] for t in triples] == [True, False]
+        assert [row["workorder_ref"] for row in validator.evidence_for_pair(
+            PAIR_A
+        )] == ["wo-joined"]
+
+    def test_a_pair_key_naming_no_judged_pair_is_still_refused(
+        self, fb, validator, repo, tmp_path
+    ):
+        """The case the guard was written for: evidence CLAIMED against a
+        pair identity that cannot be a sha256 pair key is wrong, not
+        merely absent, and must abort before any candidate code runs."""
+        bid = _tournament_branch(fb, repo, "fix/fake-pair", "wo-fake-pair")
+        for fake in ("z" * 64, "A" * 64, PAIR_A[:63], PAIR_A + "0", ""):
+            with pytest.raises(ValueError, match="sha256 pair identity"):
+                validator.validate(
+                    bid,
+                    red_cmd="./red.sh",
+                    green_cmd="./green.sh",
+                    scratch_dir=str(tmp_path / "scratch"),
+                    standing=_standing(pair_keys=[PAIR_A, fake], played=3),
+                )
+        assert fb.current_validation(bid) is None
+        assert validator.ranking_evidence_for_pool("wave-13") == []
+        assert _no_worktrees_left(repo)
+
+    def test_record_ranking_evidence_refuses_a_fake_pair_key_directly(
+        self, fb, validator, repo, tmp_path
+    ):
+        bid = _tournament_branch(fb, repo, "fix/direct", "wo-direct")
+        with pytest.raises(ValueError, match="sha256 pair identity"):
+            validator.record_ranking_evidence(
+                bid,
+                validation_id=1,
+                tested_sha="0" * 40,
+                outcome="failed",
+                standing=_standing(pair_keys=["not-a-pair-key"], played=3),
+                workorder_ref="wo-direct",
+            )
+        assert validator.ranking_evidence_for_pool("wave-13") == []
+
+    def test_join_status_is_derived_from_the_standing_not_asserted(
+        self, fb, validator, repo, tmp_path
+    ):
+        bid = _tournament_branch(fb, repo, "fix/derived", "wo-derived")
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(),
+        )
+        with_keys = res["ranking_evidence_id"]
+        without = validator.record_ranking_evidence(
+            bid,
+            validation_id=res["validation_id"],
+            tested_sha=res["tested_sha"],
+            outcome="passed",
+            standing=_standing(points=1, played=1, rank=2, pair_keys=[]),
+            workorder_ref="wo-derived",
+        )
+        assert validator.ranking_evidence(with_keys)["join_status"] == "joined"
+        assert validator.ranking_evidence(without)["join_status"] == (
+            "no-pair-keys"
+        )
+
+class TestBeatOutcomeIsUsableEvidence:
+    def test_validate_hands_back_the_whole_labelled_example(
+        self, fb, validator, repo, tmp_path
+    ):
+        """bin/optimize.py's consumer needs the pair keys to join on, the
+        verdict, and the provenance — without a second query."""
+        bid = _tournament_branch(
+            fb, repo, "fix/overvalued", "wo-overvalued",
+            guard_line="GUARD 1/3",
+        )
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            guard_cmd="./guard.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(),
+        )
+        assert res["passed"] is False
+        example = res["ranking_evidence"]
+        assert example["outcome"] == "failed"
+        assert example["pair_keys"] == sorted([PAIR_A, PAIR_B, PAIR_C])
+        assert example["join_status"] == "joined"
+        assert example["joinable"] is True
+        assert example["pool_id"] == "wave-13"
+        assert example["workorder_ref"] == "wo-overvalued"
+        assert example["standing"] == {
+            "points": 7,
+            "played": 3,
+            "rank": 1,
+            "rounds": 4,
+            "pool_id": "wave-13",
+            "pair_keys": sorted([PAIR_A, PAIR_B, PAIR_C]),
+        }
+        assert example["evidence_id"] == res["ranking_evidence_id"]
+        assert example["validation_id"] == res["validation_id"]
+        assert example["fix_branch_id"] == bid
+        assert example["tested_sha"] == res["tested_sha"]
+        assert example["created_at"]
+
+    def test_no_standing_means_no_example(
+        self, fb, validator, repo, tmp_path
+    ):
+        bid = _tournament_branch(fb, repo, "fix/no-standing", "wo-no-standing")
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+        )
+        assert res["ranking_evidence"] is None
+        assert res["ranking_evidence_join"] is None
+
+    def test_ranking_evidence_lookup_misses_return_none(self, fb, validator):
+        assert validator.ranking_evidence(4242) is None
+
+    def test_db_predating_join_status_is_migrated_in_place(
+        self, fb, validator, repo, tmp_path
+    ):
+        """A row written before join_status existed could only have had
+        pair keys — an empty set aborted the whole validation then — so it
+        backfills to 'joined'."""
+        with fb._connect() as conn:
+            conn.executescript(
+                "CREATE TABLE ranking_evidence ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  pool_id TEXT NOT NULL, workorder_ref TEXT NOT NULL,"
+                "  fix_branch_id INTEGER NOT NULL, validation_id INTEGER NOT NULL,"
+                "  tested_sha TEXT NOT NULL, outcome TEXT NOT NULL,"
+                "  points INTEGER NOT NULL, played INTEGER NOT NULL,"
+                "  rank INTEGER NOT NULL, rounds INTEGER NOT NULL,"
+                "  created_at TEXT NOT NULL DEFAULT (datetime('now')));"
+                "CREATE TABLE ranking_evidence_pair ("
+                "  evidence_id INTEGER NOT NULL, pair_key TEXT NOT NULL,"
+                "  PRIMARY KEY (evidence_id, pair_key));"
+            )
+            conn.execute(
+                "INSERT INTO ranking_evidence(id, pool_id, workorder_ref, "
+                "fix_branch_id, validation_id, tested_sha, outcome, points, "
+                "played, rank, rounds) VALUES "
+                "(1,'wave-old','wo-old',1,1,'deadbeef','passed',9,3,1,4)"
+            )
+            conn.execute(
+                "INSERT INTO ranking_evidence_pair(evidence_id, pair_key) "
+                "VALUES (1, ?)",
+                (PAIR_A,),
+            )
+            conn.commit()
+
+        bid = _tournament_branch(fb, repo, "fix/after-migration", "wo-new")
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(
+                pool_id="wave-old", points=1, played=1, rank=2, pair_keys=[]
+            ),
+        )
+        assert res["passed"] is True
+
+        old, new = validator.ranking_evidence_for_pool("wave-old")
+        assert (old["workorder_ref"], old["join_status"], old["pair_keys"]) == (
+            "wo-old", "joined", [PAIR_A]
+        )
+        assert (new["workorder_ref"], new["join_status"], new["pair_keys"]) == (
+            "wo-new", "no-pair-keys", []
+        )
+        with fb._connect() as conn:
+            columns = {
+                r[1] for r in conn.execute("PRAGMA table_info(ranking_evidence)")
+            }
+        assert {"join_status", "join_detail"} <= columns
+
+class TestAPairKeyMustBeWholeAndReal:
+    def test_a_trailing_newline_is_not_a_pair_key(
+        self, fb, validator, repo, tmp_path
+    ):
+        """'<64 hex>\\n' passed a '$'-anchored re.match and landed forever in
+        a table whose UPDATE and DELETE triggers RAISE(ABORT)."""
+        bid = _tournament_branch(fb, repo, "fix/newline", "wo-newline")
+        with pytest.raises(ValueError, match="sha256 pair identity"):
+            validator.validate(
+                bid,
+                red_cmd="./red.sh",
+                green_cmd="./green.sh",
+                scratch_dir=str(tmp_path / "scratch"),
+                standing=_standing(pair_keys=[PAIR_A, PAIR_B + "\n"]),
+            )
+        assert fb.current_validation(bid) is None
+        assert validator.ranking_evidence_for_pool("wave-13") == []
+
+    def test_a_well_formed_key_that_names_no_judged_pair_is_refused(
+        self, fb, validator, repo, tmp_path
+    ):
+        bid = _tournament_branch(fb, repo, "fix/unjudged", "wo-unjudged")
+        with pytest.raises(ValueError, match="names no judged pair"):
+            validator.validate(
+                bid,
+                red_cmd="./red.sh",
+                green_cmd="./green.sh",
+                scratch_dir=str(tmp_path / "scratch"),
+                standing=_standing(pair_keys=[PAIR_A, UNJUDGED_PAIR]),
+            )
+        assert fb.current_validation(bid) is None
+        assert validator.ranking_evidence_for_pool("wave-13") == [], (
+            "shape is not existence: 64 hex characters are cheap, and "
+            "'joined' evidence against a comparison nobody made is a lie "
+            "bin/optimize.py would read as a labelled example"
+        )
+        assert _no_worktrees_left(repo)
+
+    def test_record_ranking_evidence_refuses_an_unjudged_key_directly(
+        self, fb, validator, repo
+    ):
+        bid = _tournament_branch(fb, repo, "fix/direct-unjudged", "wo-du")
+        with pytest.raises(ValueError, match="names no judged pair"):
+            validator.record_ranking_evidence(
+                bid,
+                validation_id=1,
+                tested_sha="0" * 40,
+                outcome="failed",
+                standing=_standing(pair_keys=[UNJUDGED_PAIR], played=3),
+                workorder_ref="wo-du",
+            )
+        assert validator.ranking_evidence_for_pool("wave-13") == []
+
+    def test_a_key_recorded_on_a_score_row_counts_as_judged(
+        self, fb, validator, repo, tmp_path
+    ):
+        """The dispatch ledger is not the only source: the judgement's own
+        rows name the pair too."""
+        bid = _tournament_branch(fb, repo, "fix/score-key", "wo-score-key")
+        with fb._connect() as conn:
+            conn.execute(
+                "INSERT INTO eval_template(name, version, output_definition) "
+                "VALUES ('probe-rubric', 1, '{}')"
+            )
+            template_id = conn.execute(
+                "SELECT id FROM eval_template WHERE name='probe-rubric'"
+            ).fetchone()["id"]
+            conn.execute(
+                "INSERT INTO score(rating_id, template_id, rubric_version, "
+                "name, data_type, value, tournament_db_path, match_id, "
+                "pair_key) VALUES ('r-1', ?, 1, 'judgement.verdict', "
+                "'CATEGORICAL', 'a-wins', 'probe', 0, ?)",
+                (template_id, UNJUDGED_PAIR),
+            )
+            conn.commit()
+        res = validator.validate(
+            bid,
+            red_cmd="./red.sh",
+            green_cmd="./green.sh",
+            scratch_dir=str(tmp_path / "scratch"),
+            standing=_standing(pair_keys=[UNJUDGED_PAIR], played=3),
+        )
+        assert res["ranking_evidence_join"] == "joined"
+        assert res["ranking_evidence"]["pair_keys"] == [UNJUDGED_PAIR]

@@ -40,7 +40,7 @@ defmodule TournamentUi.WorkflowRunsTest do
 
   describe "with python-seeded runs" do
     setup do
-      home = "/tmp/dt-wfruns-#{System.unique_integer([:positive])}"
+      home = "/tmp/dt-wfruns-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
       File.mkdir_p!(home)
       System.put_env("DATA_TOURNAMENTS_HOME", home)
       seed!(home)
@@ -86,7 +86,9 @@ defmodule TournamentUi.WorkflowRunsTest do
   end
 
   test "graceful empty when the DB does not exist" do
-    home = "/tmp/dt-wfruns-nodb-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-wfruns-nodb-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     System.put_env("DATA_TOURNAMENTS_HOME", home)
     on_exit(fn -> File.rm_rf(home) end)
 
@@ -95,7 +97,9 @@ defmodule TournamentUi.WorkflowRunsTest do
   end
 
   test "graceful empty when the workflow_run table is missing" do
-    home = "/tmp/dt-wfruns-notable-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-wfruns-notable-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     # A zero-byte file is a valid empty SQLite DB: opens fine, prepare
     # fails with "no such table", the adapter returns empty.

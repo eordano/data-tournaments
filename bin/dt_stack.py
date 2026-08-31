@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import signal
 import socket
 import subprocess
@@ -37,11 +36,6 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-# Default stack home lives INSIDE the repo (.dt-stack/, git-excluded via
-# .git/info/exclude): the agent sandbox blocks writes outside the
-# workspace, and workspace-local state is persistent across reboots
-# anyway. Override with DT_STACK_HOME for a system location when running
-# unsandboxed (e.g. from a launchd/systemd unit).
 STACK_HOME = Path(os.environ.get("DT_STACK_HOME", REPO / ".dt-stack"))
 RUN = STACK_HOME / "run"
 LOGS = RUN / "logs"
@@ -54,7 +48,7 @@ DEFAULTS = {
     "TEMPORAL_UI_PORT": "8233",
     "RELEASE_TASK_QUEUE": "dt-stack-release",
     "PROMPT_BACKEND": "local",
-    "DT_OPERATOR": "esteban",
+    "DT_OPERATOR": "changeme",
     "PYTHON": str(REPO / "spikes/temporal-unity-release/.venv/bin/python"),
     "NIX_HOME_UI": "/tmp/nixhome-ui",
     "NIX_SITE_PACKAGES": (
@@ -65,10 +59,6 @@ DEFAULTS = {
 }
 
 COMPONENTS = ("temporal", "worker", "ui")
-
-
-# ── config ────────────────────────────────────────────────────────────────
-
 
 def load_env() -> dict:
     cfg = dict(DEFAULTS)
@@ -81,7 +71,6 @@ def load_env() -> dict:
             cfg[k.strip()] = v.strip()
     return cfg
 
-
 def write_env(cfg: dict) -> None:
     STACK_HOME.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -92,20 +81,14 @@ def write_env(cfg: dict) -> None:
     lines += [f"{k}={v}" for k, v in cfg.items()]
     ENV_FILE.write_text("\n".join(lines) + "\n")
 
-
-# ── process helpers ───────────────────────────────────────────────────────
-
-
 def pidfile(name: str) -> Path:
     return RUN / f"{name}.pid"
-
 
 def read_pid(name: str):
     try:
         return int(pidfile(name).read_text().strip())
     except (FileNotFoundError, ValueError):
         return None
-
 
 def pid_alive(pid) -> bool:
     if pid is None:
@@ -116,12 +99,9 @@ def pid_alive(pid) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        # EPERM => a process EXISTS at that pid, we just can't signal it
-        # (macOS seatbelt). That's alive for supervision purposes.
         return True
     except OSError:
         return False
-
 
 def port_state(port: int) -> str:
     """'free' | 'live' (something accepts) | 'stuck' (listener exists but
@@ -138,7 +118,6 @@ def port_state(port: int) -> str:
         except OSError:
             return "stuck"
 
-
 def spawn(name: str, cmd: list, env: dict, cwd=None) -> int:
     LOGS.mkdir(parents=True, exist_ok=True)
     log = open(LOGS / f"{name}.log", "ab")
@@ -149,10 +128,6 @@ def spawn(name: str, cmd: list, env: dict, cwd=None) -> int:
     )
     pidfile(name).write_text(str(proc.pid))
     return proc.pid
-
-
-# ── health checks (real, per component) ───────────────────────────────────
-
 
 def temporal_healthy(cfg: dict) -> bool:
     try:
@@ -167,7 +142,6 @@ def temporal_healthy(cfg: dict) -> bool:
     except Exception:
         return False
 
-
 def ui_healthy(cfg: dict) -> bool:
     try:
         with urllib.request.urlopen(
@@ -177,16 +151,10 @@ def ui_healthy(cfg: dict) -> bool:
     except Exception:
         return False
 
-
 def worker_healthy(cfg: dict) -> bool:
     return pid_alive(read_pid("worker"))
 
-
 HEALTH = {"temporal": temporal_healthy, "worker": worker_healthy, "ui": ui_healthy}
-
-
-# ── commands ──────────────────────────────────────────────────────────────
-
 
 def base_env(cfg: dict) -> dict:
     env = dict(os.environ)
@@ -200,7 +168,6 @@ def base_env(cfg: dict) -> dict:
     )
     return env
 
-
 def up(cfg: dict) -> int:
     STACK_HOME.mkdir(parents=True, exist_ok=True)
     RUN.mkdir(parents=True, exist_ok=True)
@@ -210,7 +177,6 @@ def up(cfg: dict) -> int:
     Path(cfg["DATA_TOURNAMENTS_HOME"]).mkdir(parents=True, exist_ok=True)
     rc = 0
 
-    # temporal
     if temporal_healthy(cfg):
         print("temporal: already SERVING — skipped")
     else:
@@ -224,7 +190,6 @@ def up(cfg: dict) -> int:
         print(f"temporal: {'SERVING' if ok else 'FAILED (see logs)'}")
         rc |= 0 if ok else 1
 
-    # worker
     if worker_healthy(cfg):
         print("worker: already running — skipped")
     else:
@@ -236,7 +201,6 @@ def up(cfg: dict) -> int:
         print(f"worker: {'running (queue ' + cfg['RELEASE_TASK_QUEUE'] + ')' if ok else 'FAILED (see logs)'}")
         rc |= 0 if ok else 1
 
-    # ui — port honesty
     port = int(cfg["UI_PORT"])
     if ui_healthy(cfg) and pid_alive(read_pid("ui")):
         print(f"ui: already serving :{port} — skipped")
@@ -264,7 +228,6 @@ def up(cfg: dict) -> int:
         rc |= 0 if ok else 1
     return rc
 
-
 def wait_for(fn, timeout: int) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -272,7 +235,6 @@ def wait_for(fn, timeout: int) -> bool:
             return True
         time.sleep(2)
     return fn()
-
 
 def status(cfg: dict) -> int:
     RUN.mkdir(parents=True, exist_ok=True)
@@ -289,7 +251,6 @@ def status(cfg: dict) -> int:
               f"{'HEALTHY' if healthy else 'DOWN'}")
     (RUN / "status.json").write_text(json.dumps(rows, indent=2))
     return 0 if all(r["healthy"] for r in rows) else 1
-
 
 def down(cfg: dict) -> int:
     for name in reversed(COMPONENTS):
@@ -316,7 +277,6 @@ def down(cfg: dict) -> int:
         pidfile(name).unlink(missing_ok=True)
     return 0
 
-
 def logs(cfg: dict, component: str, lines: int) -> int:
     path = LOGS / f"{component}.log"
     if not path.exists():
@@ -327,7 +287,6 @@ def logs(cfg: dict, component: str, lines: int) -> int:
     for line in content[-lines:]:
         print(line)
     return 0
-
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="dt_stack.py", description=__doc__.splitlines()[0])
@@ -347,7 +306,6 @@ def main(argv=None) -> int:
     if args.cmd == "down":
         return down(cfg)
     return logs(cfg, args.component, args.lines)
-
 
 if __name__ == "__main__":
     sys.exit(main())

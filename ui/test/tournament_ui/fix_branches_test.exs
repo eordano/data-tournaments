@@ -100,13 +100,15 @@ defmodule TournamentUi.FixBranchesTest do
     VALUES (3, 'oldsha0000000000', 1, 1, 4, 4, 0, 0, 1);
 
     INSERT INTO fix_branch_review (fix_branch_id, tested_sha, reviewer, decision, rationale)
-    VALUES (1, 'aaaa000000000000', 'esteban', 'needs-changes', 'guard flake'),
-           (1, 'bbbb444455556666', 'esteban', 'approve', 'clean run');
+    VALUES (1, 'aaaa000000000000', 'changeme', 'needs-changes', 'guard flake'),
+           (1, 'bbbb444455556666', 'changeme', 'approve', 'clean run');
     """)
   end
 
   setup do
-    home = "/tmp/dt-fixbranches-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-fixbranches-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
     on_exit(fn -> File.rm_rf(home) end)
@@ -406,14 +408,14 @@ defmodule TournamentUi.FixBranchesTest do
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       INSERT INTO fix_branch_ship (fix_branch_id, workflow_id, tested_sha, requested_by)
-      VALUES (1, 'release:old:1', 'oldhead', 'esteban'),
-             (1, 'release:new:2', 'bbbb444455556666', 'esteban');
+      VALUES (1, 'release:old:1', 'oldhead', 'changeme'),
+             (1, 'release:new:2', 'bbbb444455556666', 'changeme');
       """)
 
       ship = FixBranches.get_branch(1).ship
       assert ship.workflow_id == "release:new:2"
       assert ship.tested_sha == "bbbb444455556666"
-      assert ship.requested_by == "esteban"
+      assert ship.requested_by == "changeme"
     end
   end
 
@@ -444,15 +446,15 @@ defmodule TournamentUi.FixBranchesTest do
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       INSERT INTO fix_branch_ship (fix_branch_id, workflow_id, tested_sha, requested_by)
-      VALUES (1, 'release:unity:abc', 'firstsha', 'esteban'),
-             (1, 'release:unity:abc', 'retrysha', 'esteban'),
+      VALUES (1, 'release:unity:abc', 'firstsha', 'changeme'),
+             (1, 'release:unity:abc', 'retrysha', 'changeme'),
              (2, 'release:unity:other', 'othersha', NULL);
       """)
 
       ship = FixBranches.ship_for_workflow("release:unity:abc")
       assert ship.fix_branch_id == 1
       assert ship.tested_sha == "retrysha"
-      assert ship.requested_by == "esteban"
+      assert ship.requested_by == "changeme"
 
       assert FixBranches.ship_for_workflow("release:unknown:zzz") == nil
     end

@@ -11,6 +11,10 @@ ui/erl_crash.dump
 *.db
 *.db-journal
 
+# dt-stack operator config — machine-specific absolute paths; regenerated
+# from bin/dt_stack.py DEFAULTS on first `dt_stack.py up`. Never commit.
+.dt-stack/
+
 # nix
 result
 result-*
@@ -38,3 +42,8 @@ __pycache__/
 # generated tournament artifacts — never commit
 corpus/
 /report-*/
+
+# C# lint jail (scripts/lint) — restore/build scratch
+.lint-jail-cache/
+scripts/lint/tests/smoke/obj/
+scripts/lint/tests/smoke/bin/

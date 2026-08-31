@@ -1,96 +1,61 @@
 defmodule TournamentUiWeb.Layouts do
   @moduledoc """
-  This module holds layouts and related functionality
-  used by your application.
+  Layout-level components.
+
+  `flash_group/1` lives here because Phoenix v1.8 (see `ui/AGENTS.md`)
+  reserves the flash group for the layout module. The workspace shells in
+  `TournamentUiWeb.CoreComponents` render it from here rather than
+  assembling a second copy of the same markup out of `<.flash>`.
+
+  The generated `app/1` shell that used to sit in this module has been
+  deleted rather than adopted. Nothing called it: no LiveView declared
+  `layout: {Layouts, :app}`, no controller rendered it, and its body was
+  framework marketing chrome -- the Phoenix logo, the linked Phoenix
+  version, and "Website"/"GitHub"/"Get Started" links pointing at
+  phoenixframework.org. Adopting it as the real shell would have meant
+  editing `use Phoenix.LiveView` in `lib/tournament_ui_web.ex`, and the
+  workspace already has a real shell in `workspace_page/1` and
+  `workspace_split/1`. `theme_toggle/1` outlived it: it is the only control
+  that reaches dark mode, and the one call site left over from the deleted
+  shell -- `page_html/home.html.heex` -- has no route, so the workspace
+  shells now render the toggle in their header bar.
   """
   use TournamentUiWeb, :html
 
-  # Embed all files in layouts/* within this module.
-  # The default root.html.heex file contains the HTML
-  # skeleton of your application, namely HTML headers
-  # and other static content.
   embed_templates "layouts/*"
-
-  @doc """
-  Renders your app layout.
-
-  This function is typically invoked from every template,
-  and it often contains your application menu, sidebar,
-  or similar.
-
-  ## Examples
-
-      <Layouts.app flash={@flash}>
-        <h1>Content</h1>
-      </Layouts.app>
-
-  """
-  attr :flash, :map, required: true, doc: "the map of flash messages"
-
-  attr :current_scope, :map,
-    default: nil,
-    doc: "the current [scope](https://hexdocs.pm/phoenix/scopes.html)"
-
-  slot :inner_block, required: true
-
-  def app(assigns) do
-    ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
-        </a>
-      </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-          <li>
-            <a href="https://hexdocs.pm/phoenix/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
-        </ul>
-      </div>
-    </header>
-
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
-        {render_slot(@inner_block)}
-      </div>
-    </main>
-
-    <.flash_group flash={@flash} />
-    """
-  end
 
   @doc """
   Shows the flash group with standard titles and content.
 
+  `corner` picks the fixed viewport corner the toasts occupy. The workspace
+  shells pass `"toast-bottom toast-start"`: the judging screen packs the
+  queue strip, the domain filter and the round counter along the top edge,
+  and the Skip and Submit buttons along the right edge, so the bottom-left
+  is the only corner a toast can take without landing on a control a judge
+  presses every few seconds.
+
   ## Examples
 
-      <.flash_group flash={@flash} />
+      <Layouts.flash_group flash={@flash} />
+      <Layouts.flash_group flash={@flash} corner="toast-bottom toast-start" />
   """
   attr :flash, :map, required: true, doc: "the map of flash messages"
   attr :id, :string, default: "flash-group", doc: "the optional id of flash container"
 
+  attr :corner, :string,
+    default: "toast-top toast-end",
+    doc: "daisyUI placement classes for the fixed toast container"
+
   def flash_group(assigns) do
     ~H"""
     <div id={@id} aria-live="polite">
-      <.flash kind={:info} flash={@flash} />
-      <.flash kind={:error} flash={@flash} />
+      <.flash kind={:info} flash={@flash} corner={@corner} />
+      <.flash kind={:error} flash={@flash} corner={@corner} />
 
       <.flash
         id="client-error"
         kind={:error}
+        corner={@corner}
         title="We can't find the internet"
         phx-disconnected={show(".phx-client-error #client-error") |> JS.remove_attribute("hidden")}
         phx-connected={hide("#client-error") |> JS.set_attribute({"hidden", ""})}
@@ -103,6 +68,7 @@ defmodule TournamentUiWeb.Layouts do
       <.flash
         id="server-error"
         kind={:error}
+        corner={@corner}
         title="Something went wrong!"
         phx-disconnected={show(".phx-server-error #server-error") |> JS.remove_attribute("hidden")}
         phx-connected={hide("#server-error") |> JS.set_attribute({"hidden", ""})}
@@ -129,6 +95,7 @@ defmodule TournamentUiWeb.Layouts do
         class="flex p-2 cursor-pointer w-1/3"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="system"
+        aria-label="Match system theme"
       >
         <.icon name="hero-computer-desktop-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>
@@ -137,6 +104,7 @@ defmodule TournamentUiWeb.Layouts do
         class="flex p-2 cursor-pointer w-1/3"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="light"
+        aria-label="Light theme"
       >
         <.icon name="hero-sun-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>
@@ -145,6 +113,7 @@ defmodule TournamentUiWeb.Layouts do
         class="flex p-2 cursor-pointer w-1/3"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="dark"
+        aria-label="Dark theme"
       >
         <.icon name="hero-moon-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>

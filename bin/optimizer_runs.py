@@ -14,7 +14,7 @@ Table: optimizer_run
   id           PK
   domain       TEXT  (the domain being optimized)
   target       TEXT  ("judge" | "generator")
-  rubric       TEXT  (e.g. "card-prioritizer-v0")
+  rubric       TEXT  (e.g. "pair-wheel-v2")
   prompt_name  TEXT  (langfuse prompt name)
   status       TEXT  ("running" | "done" | "error" | "canceled")
   exit_code    INTEGER
@@ -47,25 +47,20 @@ CREATE INDEX IF NOT EXISTS idx_optimizer_run_domain ON optimizer_run(domain);
 CREATE INDEX IF NOT EXISTS idx_optimizer_run_status ON optimizer_run(status);
 """
 
-
 def _db_path() -> Path:
     home = Path(os.environ.get("DATA_TOURNAMENTS_HOME", "/tmp/data-tournaments"))
     return home / "judgements.db"
 
-
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path())
     conn.row_factory = sqlite3.Row
-    # ADR 0001 §2 concurrency hygiene: wait instead of failing SQLITE_BUSY.
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
-
 
 def init() -> None:
     """Create the optimizer_run table if missing. Idempotent."""
     with _connect() as conn:
         conn.executescript(_SCHEMA)
-
 
 def start(*, domain: str, target: str, rubric: str | None = None,
           prompt_name: str | None = None) -> int:
@@ -79,7 +74,6 @@ def start(*, domain: str, target: str, rubric: str | None = None,
         )
         return cur.lastrowid
 
-
 def append_log(run_id: int, line: str) -> None:
     """Append one line to the run's log buffer."""
     with _connect() as conn:
@@ -87,7 +81,6 @@ def append_log(run_id: int, line: str) -> None:
             "UPDATE optimizer_run SET log = log || ? WHERE id = ?",
             (line + "\n", run_id),
         )
-
 
 def finish(run_id: int, *, status: str, exit_code: int | None = None,
            result: dict | None = None) -> None:
@@ -103,14 +96,12 @@ def finish(run_id: int, *, status: str, exit_code: int | None = None,
             (status, exit_code, json.dumps(result) if result is not None else None, run_id),
         )
 
-
 def get(run_id: int) -> dict | None:
     with _connect() as conn:
         row = conn.execute(
             "SELECT * FROM optimizer_run WHERE id = ?", (run_id,)
         ).fetchone()
         return _row_to_dict(row)
-
 
 def list_for_domain(domain: str, *, limit: int = 50) -> list[dict]:
     with _connect() as conn:
@@ -121,7 +112,6 @@ def list_for_domain(domain: str, *, limit: int = 50) -> list[dict]:
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
-
 def latest(*, domain: str, target: str) -> dict | None:
     with _connect() as conn:
         row = conn.execute(
@@ -130,7 +120,6 @@ def latest(*, domain: str, target: str) -> dict | None:
             (domain, target),
         ).fetchone()
         return _row_to_dict(row)
-
 
 def _row_to_dict(row) -> dict | None:
     if row is None:

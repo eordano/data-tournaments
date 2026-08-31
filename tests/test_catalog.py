@@ -21,14 +21,12 @@ from bin.landscape import (
     content_digest,
 )
 
-
 @pytest.fixture
 def catalog(tmp_data_home):
     from bin import catalog as mod
 
     mod.init()
     return mod
-
 
 @pytest.fixture
 def raw(tmp_data_home):
@@ -37,7 +35,6 @@ def raw(tmp_data_home):
     conn.row_factory = sqlite3.Row
     yield conn
     conn.close()
-
 
 def _evidence(uri="doc://guide", tier=TrustTier.TIER2_INTERNAL, **kw) -> EvidenceRef:
     return EvidenceRef(
@@ -48,14 +45,10 @@ def _evidence(uri="doc://guide", tier=TrustTier.TIER2_INTERNAL, **kw) -> Evidenc
         **kw,
     )
 
-
-# ── init / schema ───────────────────────────────────────────────────────
-
-
 class TestInit:
     def test_init_twice_is_idempotent(self, catalog):
-        catalog.init()  # second call on an existing DB must not raise
-        catalog.init()  # third, for luck
+        catalog.init()
+        catalog.init()
 
     def test_all_catalog_tables_and_triggers_exist(self, catalog, raw):
         tables = {
@@ -67,8 +60,6 @@ class TestInit:
             "environment", "policy", "component_capability", "project_skill",
             "evidence_ref", "landscape_snapshot", "snapshot_evidence",
             "context_pack", "workflow_spec",
-            # workflow_run unblocked once the Temporal spike landed (b9585be):
-            # ADR 0001 §4 step 6, written only by Python Temporal Activities.
             "workflow_run",
         ):
             assert t in tables, f"missing table {t}"
@@ -99,7 +90,7 @@ class TestInit:
 
         importlib.reload(judgement)
         judgement.init_db()
-        judgement.init_db()  # idempotent with the new DDL too
+        judgement.init_db()
         conn = sqlite3.connect(str(tmp_data_home / "judgements.db"))
         try:
             tables = {
@@ -109,10 +100,6 @@ class TestInit:
         finally:
             conn.close()
         assert {"project", "evidence_ref", "workflow_spec"} <= tables
-
-
-# ── busy_timeout hygiene (ADR 0001 §2 / migration step 1) ───────────────
-
 
 class TestBusyTimeout:
     def test_catalog_connection_sets_busy_timeout(self, catalog):
@@ -144,16 +131,12 @@ class TestBusyTimeout:
         import importlib
         import judgement
 
-        importlib.reload(judgement)  # re-read DATA_TOURNAMENTS_HOME
+        importlib.reload(judgement)
         conn = judgement._connect()
         try:
             assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
         finally:
             conn.close()
-
-
-# ── Mutable catalog CRUD ─────────────────────────────────────────────────
-
 
 class TestMutableCrud:
     def test_project_round_trip(self, catalog):
@@ -222,7 +205,7 @@ class TestMutableCrud:
         catalog.create_skill(
             name="release", version=2, locator="/skills/release", digest="abc"
         )
-        assert catalog.get_skill("release")["version"] == 2  # latest
+        assert catalog.get_skill("release")["version"] == 2
         assert catalog.get_skill("release", 1)["version"] == 1
         assert len(catalog.list_skills()) == 2
         catalog.archive_skill("release", 1)
@@ -252,7 +235,7 @@ class TestMutableCrud:
         capid = catalog.create_capability(name="judge")
         skid = catalog.create_skill(name="s", version=1, locator="/s")
         catalog.link_component_capability(cid, capid)
-        catalog.link_component_capability(cid, capid)  # idempotent
+        catalog.link_component_capability(cid, capid)
         catalog.link_project_skill(pid, skid)
         conn = catalog._connect()
         try:
@@ -271,7 +254,6 @@ class TestMutableCrud:
         with pytest.raises(LookupError):
             catalog.get_capability("nope")
 
-
 class TestUniqueConstraints:
     def test_duplicate_project_name(self, catalog):
         catalog.create_project(name="p1")
@@ -284,7 +266,7 @@ class TestUniqueConstraints:
         catalog.create_component(project="p1", name="c", kind="app")
         with pytest.raises(ValueError):
             catalog.create_component(project="p1", name="c", kind="app")
-        catalog.create_component(project="p2", name="c", kind="app")  # fine
+        catalog.create_component(project="p2", name="c", kind="app")
 
     def test_duplicate_source_within_project(self, catalog):
         catalog.create_project(name="p1")
@@ -307,10 +289,6 @@ class TestUniqueConstraints:
         catalog.create_skill(name="s", version=1, locator="/s")
         with pytest.raises(ValueError):
             catalog.create_skill(name="s", version=1, locator="/other")
-
-
-# ── Immutability triggers (ADR 0002 §4) ─────────────────────────────────
-
 
 class TestImmutability:
     @pytest.fixture
@@ -378,10 +356,6 @@ class TestImmutability:
         catalog.insert_evidence_ref(_evidence(), source_id=src["id"])
         assert raw.execute("SELECT COUNT(*) FROM evidence_ref").fetchone()[0] == 1
 
-
-# ── CAS threshold behavior (ADR 0002 §2–3) ──────────────────────────────
-
-
 class TestCas:
     def test_small_body_stored_inline(self, catalog, raw, tmp_data_home):
         catalog.create_project(name="p1")
@@ -391,9 +365,8 @@ class TestCas:
         row = raw.execute(
             "SELECT body FROM evidence_ref WHERE digest=?", (digest,)
         ).fetchone()
-        assert row["body"] is not None  # inline
+        assert row["body"] is not None
         assert not catalog.cas_path(digest).exists()
-        # readback resolves to the identical canonical body
         got = catalog.get_evidence_ref(digest)
         assert content_digest(json.loads(got["body"])) == digest
 
@@ -401,8 +374,6 @@ class TestCas:
         catalog.create_project(name="p1")
         catalog.create_source(project="p1", name="s", kind="docs", locator="doc://")
         src = catalog.get_source("p1", "s")
-        # Canonical dict payload (dict path bypasses the model's excerpt
-        # bound) with a body comfortably above the 64 KiB inline threshold.
         payload = {
             "source_type": "doc",
             "canonical_uri": "doc://big",
@@ -419,16 +390,13 @@ class TestCas:
         row = raw.execute(
             "SELECT body FROM evidence_ref WHERE digest=?", (digest,)
         ).fetchone()
-        assert row["body"] is None  # column NULL → CAS
+        assert row["body"] is None
 
         path = catalog.cas_path(digest)
         assert path.exists()
-        # fan-out layout: cas/sha256/<2hex>/<hex>
         assert path == tmp_data_home / "cas" / "sha256" / digest[:2] / digest
-        # read-only 0444
         assert stat.S_IMODE(path.stat().st_mode) == 0o444
 
-        # readback resolves the CAS body and is digest-identical
         got = catalog.get_evidence_ref(digest)
         assert got["body"] == canonical_json(payload)
         assert content_digest(json.loads(got["body"])) == digest
@@ -436,17 +404,13 @@ class TestCas:
     def test_cas_write_rewrite_is_noop(self, catalog):
         digest = content_digest({"a": 1})
         p1 = catalog.cas_write(digest, canonical_json({"a": 1}))
-        p2 = catalog.cas_write(digest, canonical_json({"a": 1}))  # no-op, no raise
+        p2 = catalog.cas_write(digest, canonical_json({"a": 1}))
         assert p1 == p2
         assert catalog.cas_read(digest) == canonical_json({"a": 1})
 
     def test_cas_read_missing_is_hard_error(self, catalog):
         with pytest.raises(FileNotFoundError):
             catalog.cas_read("f" * 64)
-
-
-# ── Integration: real bin.landscape artifacts round-trip ────────────────
-
 
 class TestLandscapeIntegration:
     def test_snapshot_pack_spec_persist_and_read_back_digest_identical(
@@ -475,21 +439,17 @@ class TestLandscapeIntegration:
         for ref in snapshot.evidence:
             catalog.link_snapshot_evidence(snap_digest, ref.digest)
 
-        # Snapshot manifest reads back digest-identical.
         row = catalog.get_landscape_snapshot(snap_digest)
         manifest = json.loads(row["manifest"])
         assert content_digest(manifest) == snapshot.digest
         assert manifest == snapshot._content_payload()
-        # Join rows cover exactly the snapshot's evidence digests.
         assert catalog.list_snapshot_evidence(snap_digest) == sorted(
             ref.digest for ref in snapshot.evidence
         )
-        # Each evidence body reads back digest-identical.
         for ref in snapshot.evidence:
             body = json.loads(catalog.get_evidence_ref(ref.digest)["body"])
             assert content_digest(body) == ref.digest
 
-        # ContextPack (judge role flags the tier-3 ref).
         pack = build_pack(snapshot, Role.JUDGE)
         pack_digest = catalog.insert_context_pack(pack)
         assert pack_digest == pack.digest
@@ -498,7 +458,6 @@ class TestLandscapeIntegration:
         assert pack_row["snapshot_digest"] == snap_digest
         assert content_digest(json.loads(pack_row["manifest"])) == pack.digest
 
-        # WorkflowSpec.
         spec = WorkflowSpec(
             name="release",
             steps=(
@@ -513,8 +472,6 @@ class TestLandscapeIntegration:
         spec_row = catalog.get_workflow_spec(spec_digest)
         assert content_digest(json.loads(spec_row["spec"])) == spec.digest
         assert spec_row["pack_digest"] == pack_digest
-        # The validator forced needs_approval on the deploy step, and that
-        # is part of the persisted canonical body.
         persisted = json.loads(spec_row["spec"])
         deploy = [s for s in persisted["steps"] if s["id"] == "deploy"][0]
         assert deploy["needs_approval"] is True
@@ -523,7 +480,6 @@ class TestLandscapeIntegration:
         pid = catalog.create_project(name="p1")
         snapshot = LandscapeSnapshot(project="p1", created_at="2026-01-01T00:00:00Z")
         d1 = catalog.insert_landscape_snapshot(snapshot, project_id=pid)
-        # Same content as canonical dict → same digest, still one row.
         d2 = catalog.insert_landscape_snapshot(
             snapshot._content_payload(), project_id=pid
         )

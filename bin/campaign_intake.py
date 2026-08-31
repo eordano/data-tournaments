@@ -29,48 +29,43 @@ if str(_REPO_ROOT) not in sys.path:
 from bin import campaigns, catalog  # noqa: E402
 from bin.landscape.adapters import get_adapter  # noqa: E402
 
-#: Source kinds this intake understands, mapped to adapter registry kinds.
 SIGNAL_KINDS = {
     "sentry-csv": "sentry_csv",
     "slack-csv": "slack_csv",
     "github-autoclosed": "github_autoclosed",
+    "foundry-stories": "foundry_stories",
 }
-
 
 class IntakeError(RuntimeError):
     pass
 
+def _uri_digest(uri: str) -> str:
+    return hashlib.sha256(uri.encode("utf-8")).hexdigest()[:8]
+
 
 def _slug_for(uri: str, title_hint: str = "") -> str:
-    """Deterministic finding slug from the signal's canonical URI."""
+    """Deterministic finding slug from the signal's canonical URI. The
+    8-hex suffix is the identity (URI-derived); the stem is display sugar
+    from the title and may drift between runs — dedup keys on the suffix,
+    never the whole slug."""
     words = re.findall(r"[a-z0-9]+", title_hint.lower())[:5]
     stem = "-".join(words) if words else "signal"
-    digest = hashlib.sha256(uri.encode("utf-8")).hexdigest()[:8]
-    return f"{stem}-{digest}"
-
+    return f"{stem}-{_uri_digest(uri)}"
 
 def _title_from_excerpt(excerpt: str) -> str:
     first = (excerpt or "").strip().splitlines()[0] if excerpt else ""
     return first[:180] or "untitled signal"
 
-
-#: config key -> kind label used in dedup reasons (mirrors the
-#: dedup_lists adapter's canonical-uri kinds).
 _DEDUP_KINDS = {
     "open_prs_tsv": "open_prs",
     "inflight_tsv": "inflight",
     "prior_slugs_text": "prior_slugs",
 }
 
-#: Minimum length for a plain-word token. Shorter tokens are kept only when
-#: they look like identifiers (contain '-', '_', or a digit) — stopword-sized
-#: words like 'does' must never gate a finding.
 _MIN_PLAIN_TOKEN_LEN = 6
-
 
 def _keep_token(tok: str) -> bool:
     return len(tok) >= _MIN_PLAIN_TOKEN_LEN or bool(re.search(r"[-_0-9]", tok))
-
 
 def _identifier_tokens(kind: str, content: str):
     """Yield structured identifier tokens from ONE dedup list's raw content.
@@ -93,15 +88,13 @@ def _identifier_tokens(kind: str, content: str):
         for cell in line.split("\t"):
             cell = cell.strip().lower()
             if not cell or re.search(r"\s", cell):
-                continue  # multi-word cell == free text (e.g. PR title)
+                continue
             if re.fullmatch(r"\d+", cell):
-                yield cell  # PR number, e.g. '9911'
+                yield cell
             elif re.fullmatch(r"[a-z0-9][a-z0-9/_.-]*", cell) and re.search(
                 r"[/_-]", cell
             ):
-                # Branch/slug-shaped cell; match on the head segment.
                 yield cell.rsplit("/", 1)[-1]
-
 
 def _dedup_tokens(campaign_name: str, config: dict) -> tuple[dict[str, str], list]:
     """Collect dedup-list evidence and extract match tokens.
@@ -130,26 +123,28 @@ def _dedup_tokens(campaign_name: str, config: dict) -> tuple[dict[str, str], lis
                 tokens.setdefault(tok, kind)
     return tokens, list(refs)
 
-
 def ingest(
     campaign_name: str,
     *,
     signals: dict[str, dict],
     dedup: Optional[dict] = None,
     limits: Optional[dict] = None,
+    max_new: Optional[int] = None,
 ) -> dict[str, Any]:
     """Run intake for a campaign.
 
-    signals: {source_name: {kind: sentry-csv|slack-csv|github-autoclosed,
-              config: adapter config dict}}
+    signals: {source_name: {kind: sentry-csv|slack-csv|github-autoclosed|
+              foundry-stories, config: adapter config dict}}
     dedup:   optional {open_prs_tsv, inflight_tsv, prior_slugs_text}
+    max_new: candidate budget — stop minting findings once this many were
+             created this run (evidence for the remainder is still frozen,
+             so 'what was dropped?' stays answerable via truncated=true).
 
     Returns {created: [slugs], deduped: [{slug, reason}], skipped_existing:
-    [slugs], evidence_count, per_source: {name: count}}.
+    [slugs], evidence_count, per_source: {name: count}, truncated}.
     """
-    camp = campaigns.get_campaign(campaign_name)  # raises LookupError
+    camp = campaigns.get_campaign(campaign_name)
     project_id = camp["project_id"]
-    # Resolve the project name for source registration.
     projects = {p["id"]: p["name"] for p in catalog.list_projects()}
     project_name = projects.get(project_id)
     if project_name is None:
@@ -158,11 +153,13 @@ def ingest(
     tokens, dedup_refs = _dedup_tokens(campaign_name, dedup or {})
 
     existing = {f["slug"] for f in campaigns.list_findings(campaign_name)}
+    existing_ids = {s.rsplit("-", 1)[-1] for s in existing}
     created: list[str] = []
     deduped: list[dict] = []
     skipped: list[str] = []
     per_source: dict[str, int] = {}
     evidence_count = 0
+    truncated = False
 
     for source_name, spec in signals.items():
         kind = spec.get("kind", "")
@@ -172,7 +169,6 @@ def ingest(
                 f"source {source_name!r}: unknown signal kind {kind!r}; "
                 f"known: {', '.join(sorted(SIGNAL_KINDS))}"
             )
-        # Ensure the catalog source row exists (idempotent).
         try:
             src = catalog.get_source(project_name, source_name)
         except LookupError:
@@ -195,12 +191,14 @@ def ingest(
         for ref in refs:
             digest = catalog.insert_evidence_ref(ref, source_id=src["id"])
             evidence_count += 1
+            if max_new is not None and len(created) >= max_new:
+                truncated = True
+                continue
             title = _title_from_excerpt(ref.excerpt)
             slug = _slug_for(ref.canonical_uri, title)
-            if slug in existing:
+            if slug in existing or _uri_digest(ref.canonical_uri) in existing_ids:
                 skipped.append(slug)
                 continue
-            # Dedup gate: any slug-ish token match against the lists.
             hit = next(
                 (
                     (tok, which)
@@ -238,6 +236,7 @@ def ingest(
                     role="dedup",
                 )
             existing.add(slug)
+            existing_ids.add(_uri_digest(ref.canonical_uri))
             created.append(slug)
 
     return {
@@ -246,4 +245,42 @@ def ingest(
         "skipped_existing": skipped,
         "evidence_count": evidence_count,
         "per_source": per_source,
+        "truncated": truncated,
     }
+
+
+def ingest_from_spec(
+    campaign_name: str,
+    *,
+    dedup: Optional[dict] = None,
+    limits: Optional[dict] = None,
+) -> dict[str, Any]:
+    """Run intake from the campaign's SweepSpec: each ``corpus`` entry maps
+    to one signal source, and ``intake.max_candidates`` becomes the
+    candidate budget. Raises IntakeError when the campaign has no spec or a
+    corpus entry names an adapter this intake doesn't serve."""
+    spec = campaigns.get_sweep_spec(campaign_name)
+    if spec is None:
+        raise IntakeError(
+            f"campaign {campaign_name!r} has no sweep spec; use ingest() "
+            "with explicit signals"
+        )
+    if not spec.corpus:
+        raise IntakeError(f"sweep spec for {campaign_name!r} declares no corpus")
+    kind_by_adapter = {v: k for k, v in SIGNAL_KINDS.items()}
+    signals: dict[str, dict] = {}
+    for i, src in enumerate(spec.corpus):
+        kind = kind_by_adapter.get(src.adapter)
+        if kind is None:
+            raise IntakeError(
+                f"corpus[{i}]: adapter {src.adapter!r} is not an intake "
+                f"signal adapter; known: {', '.join(sorted(SIGNAL_KINDS.values()))}"
+            )
+        signals[f"{src.adapter}-{i}"] = {"kind": kind, "config": dict(src.config)}
+    return ingest(
+        campaign_name,
+        signals=signals,
+        dedup=dedup,
+        limits=limits,
+        max_new=spec.intake.max_candidates,
+    )

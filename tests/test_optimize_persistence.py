@@ -16,7 +16,6 @@ import pytest
 from bin import optimizer_runs, optimize
 from tests.conftest import make_evaluation_summary
 
-
 @pytest.fixture
 def seeded(fake_langfuse, monkeypatch, tmp_data_home):
     monkeypatch.setattr("bin.prompts._client_factory", lambda: fake_langfuse.as_client())
@@ -32,16 +31,21 @@ def seeded(fake_langfuse, monkeypatch, tmp_data_home):
     judgement.init_db()
     optimizer_runs.init()
 
-    # Seed 3 human judgements
     db = sqlite3.connect(str(tmp_data_home / "judgements.db"))
-    cfg_id = db.execute("SELECT id FROM job_configuration WHERE rater_type='human'").fetchone()[0]
-    tpl_id, rv = db.execute("SELECT id, version FROM eval_template").fetchone()
+    tpl_id, rv = db.execute(
+        "SELECT id, version FROM eval_template WHERE name=?",
+        (judgement.DEFAULT_TEMPLATE_NAME,),
+    ).fetchone()
+    cfg_id = db.execute(
+        "SELECT id FROM job_configuration WHERE rater_type='human' AND template_id=?",
+        (tpl_id,),
+    ).fetchone()[0]
     domain_id = db.execute(
         "INSERT INTO domain(name, description, generator_prompt, judge_prompt, corpus_source) "
         "VALUES ('commit-msg', 'Commit messages', 'card-generator:commit-msg', "
         "'judge-instructions:commit-msg', '{\"kind\":\"inline\",\"items\":[]}')"
     ).lastrowid
-    for i, v in enumerate(["a-clearly-better", "b-clearly-better", "tie-both-strong"]):
+    for i, v in enumerate(["a-wins-big", "b-wins-big", "tie"]):
         payload = {"card_a": {"title": f"A{i}", "body": "x"},
                    "card_b": {"title": f"B{i}", "body": "y"}}
         db.execute(
@@ -64,19 +68,16 @@ def seeded(fake_langfuse, monkeypatch, tmp_data_home):
     db.close()
     return tmp_data_home
 
-
 class _StubLM:
     def __init__(self, name="stub"):
         self.model = name
 
-
 _summary = make_evaluation_summary
-
 
 def test_run_with_run_id_writes_log_and_finishes(seeded, monkeypatch):
     """Optimize writes status transitions and log lines to optimizer_run."""
     def fake_compile(program, trainset, metric, **kwargs):
-        return program  # No-op optimizer
+        return program
     monkeypatch.setattr(optimize, "_compile_with_gepa", fake_compile)
     monkeypatch.setattr(optimize, "_build_lm", lambda model=None: _StubLM("openai/stub-judge"))
     monkeypatch.setattr(optimize, "_build_reflection_lm", lambda model=None: _StubLM("openai/stub-reflect"))
@@ -88,26 +89,23 @@ def test_run_with_run_id_writes_log_and_finishes(seeded, monkeypatch):
         "_curate_context",
         lambda seed, evolved, evidence, lm, **kw: (seed + "\nCURATED", {"added": 1, "removed": 0, "reinforced": 0, "weakened": 0}, [{"section": "strategy", "content": "A detailed reusable lesson for this test run."}]),
     )
-    # Three seeded examples only produce 1-item eval splits; opt out of the
-    # default 2/2 minimum-evidence gate for this persistence-focused test.
     monkeypatch.setenv("OPTIMIZER_MIN_VALIDATION", "1")
     monkeypatch.setenv("OPTIMIZER_MIN_HOLDOUT", "1")
 
-    # Skip real LM configure
     import dspy
     class _FakeLM:
-        def __call__(self, *a, **kw): return ["a-clearly-better"]
+        def __call__(self, *a, **kw): return ["a-wins-big"]
     dspy.settings.configure(lm=_FakeLM(), bypass_test=True)
 
     run_id = optimizer_runs.start(
         domain="commit-msg", target="judge",
-        rubric="card-prioritizer-v0",
+        rubric="pair-wheel-v2",
         prompt_name="judge-instructions:commit-msg",
     )
 
     optimize.run_with_persistence(
         run_id=run_id,
-        rubric="card-prioritizer-v0",
+        rubric="pair-wheel-v2",
         auto="light",
         min_trainset=2,
         prompt_name="judge-instructions:commit-msg",
@@ -123,7 +121,6 @@ def test_run_with_run_id_writes_log_and_finishes(seeded, monkeypatch):
     assert row["result"]["trainset_size"] == 1
     assert row["result"]["accepted"] is True
 
-
 def test_run_with_persistence_records_error_on_failure(seeded, monkeypatch):
     """If optimize raises, the row records status=error and the message."""
     monkeypatch.setattr(optimize, "_build_lm", lambda model=None: _StubLM())
@@ -132,14 +129,13 @@ def test_run_with_persistence_records_error_on_failure(seeded, monkeypatch):
 
     run_id = optimizer_runs.start(
         domain="commit-msg", target="judge",
-        rubric="card-prioritizer-v0",
+        rubric="pair-wheel-v2",
         prompt_name="judge-instructions:commit-msg",
     )
 
-    # min_trainset too high → RuntimeError
     optimize.run_with_persistence(
         run_id=run_id,
-        rubric="card-prioritizer-v0",
+        rubric="pair-wheel-v2",
         auto="light",
         min_trainset=999,
         prompt_name="judge-instructions:commit-msg",

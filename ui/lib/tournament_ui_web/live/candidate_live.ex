@@ -55,7 +55,7 @@ defmodule TournamentUiWeb.CandidateLive do
   @impl true
   def render(%{row: nil} = assigns) do
     ~H"""
-    <.workspace_page current={:judge} max_width="max-w-2xl" title="Candidate not found">
+    <.workspace_page current={:judge} flash={@flash} max_width="max-w-2xl" title="Candidate not found">
       <div class="app-card p-8 text-center">
         <div class="text-sm font-medium">No such candidate</div>
         <p class="text-xs opacity-60 mt-2">
@@ -69,7 +69,7 @@ defmodule TournamentUiWeb.CandidateLive do
 
   def render(%{item: %{present?: false}} = assigns) do
     ~H"""
-    <.workspace_page current={:judge} max_width="max-w-2xl" title="Empty side">
+    <.workspace_page current={:judge} flash={@flash} max_width="max-w-2xl" title="Empty side">
       <div class="app-card p-8 text-center">
         <div class="text-sm font-medium">This side of the pair is empty (bye)</div>
         <.link navigate="/judge" class="btn btn-ghost btn-sm mt-4">← Review queue</.link>
@@ -80,7 +80,7 @@ defmodule TournamentUiWeb.CandidateLive do
 
   def render(assigns) do
     ~H"""
-    <.workspace_page current={:judge} max_width="max-w-3xl" title={@item.title}>
+    <.workspace_page current={:judge} flash={@flash} max_width="max-w-3xl" title={@item.title}>
       <:title_actions>
         <.link
           navigate={DomainNav.judge_path(@row.domain_name)}

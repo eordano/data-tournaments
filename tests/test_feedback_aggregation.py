@@ -13,8 +13,6 @@ import uuid
 import pytest
 
 from bin.feedback import list_card_feedback_for_domain
-from bin import judgement
-
 
 @pytest.fixture
 def fabric_with_scores(fake_langfuse, tmp_data_home, monkeypatch):
@@ -60,24 +58,21 @@ def fabric_with_scores(fake_langfuse, tmp_data_home, monkeypatch):
     _seed_pair(0,
         {"title": "strong card", "body": "useful", "source_ref": "git:aaa"},
         {"title": "weak card", "body": "vague", "source_ref": "git:bbb"},
-        "a-clearly-better")
+        "a-wins-big")
     _seed_pair(1,
         {"title": "good 1", "body": "x", "source_ref": "git:ccc"},
-        {"title": "good 2", "body": "y", "source_ref": "git:ddd"},
-        "tie-both-strong")
+        {"title": "junk", "body": "y", "source_ref": "git:ddd"},
+        "discard-b")
     _seed_pair(2,
-        {"title": "bad 1", "body": "z", "source_ref": "git:eee"},
-        {"title": "bad 2", "body": "w", "source_ref": "git:fff"},
-        "tie-both-weak")
+        {"title": "junk 2", "body": "z", "source_ref": "git:eee"},
+        {"title": "survivor", "body": "w", "source_ref": "git:fff"},
+        "discard-a")
     db.commit()
     return tmp_data_home
 
-
 def test_returns_one_feedback_row_per_card_per_scored_pair(fabric_with_scores):
     rows = list_card_feedback_for_domain("commit-msg")
-    # 3 pairs scored × 2 cards = 6 rows
     assert len(rows) == 6
-
 
 def test_feedback_rows_carry_domain_and_provenance(fabric_with_scores):
     rows = list_card_feedback_for_domain("commit-msg")
@@ -86,25 +81,22 @@ def test_feedback_rows_carry_domain_and_provenance(fabric_with_scores):
         assert r["source_ref"].startswith("git:")
         assert "quality" in r and "weight" in r
 
-
 def test_aggregate_quality_counts(fabric_with_scores):
+    """a-wins-big -> 1 positive + 1 weak; each discard -> 1 negative for the
+    ejected side and 1 unknown for the survivor it says nothing about."""
     rows = list_card_feedback_for_domain("commit-msg")
     qualities = [r["quality"] for r in rows]
-    # a-clearly-better → 1 positive, 1 weak
-    # tie-both-strong → 2 positive
-    # tie-both-weak → 2 negative
-    assert qualities.count("positive") == 3
+    assert qualities.count("positive") == 1
     assert qualities.count("weak") == 1
     assert qualities.count("negative") == 2
-
+    assert qualities.count("unknown") == 2
 
 def test_filters_by_minimum_weight(fabric_with_scores):
-    # weight > 0 drops the "neutral" rows; we have none here so length unchanged
+    """Excludes the weak (0.4) row and both unknown (0.0) survivors, keeping
+    the positive (1.0) and the two negatives (1.0)."""
     rows = list_card_feedback_for_domain("commit-msg", min_weight=0.5)
-    # Excludes the weak (0.4) row but keeps positives (1.0) and negatives (1.0)
     assert all(r["weight"] >= 0.5 for r in rows)
-    assert len(rows) == 5  # 3 positive + 2 negative
-
+    assert len(rows) == 3
 
 def test_returns_empty_for_unknown_domain(fabric_with_scores):
     assert list_card_feedback_for_domain("does-not-exist") == []

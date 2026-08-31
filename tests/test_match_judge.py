@@ -44,7 +44,7 @@ def test_forward_returns_named_fields(fake_langfuse, monkeypatch):
     dspy.settings.configure(lm=_scripted_lm({
         "rationale": "Card A is more concrete.",
         "confidence": "high",
-        "verdict": "a-clearly-better",
+        "verdict": "a-wins-big",
     }))
     from bin.judges.match_judge import MatchJudge
     j = MatchJudge()
@@ -56,7 +56,7 @@ def test_forward_returns_named_fields(fake_langfuse, monkeypatch):
         card_b_body="Could pin in pyproject.toml too.",
         card_b_source_ref="README.md:4",
     )
-    assert result.verdict == "a-clearly-better"
+    assert result.verdict == "a-wins-big"
     assert result.confidence == "high"
     assert "concrete" in result.rationale
 
@@ -82,7 +82,7 @@ def test_run_for_pending_uses_match_judge(tmp_data_home, fake_langfuse, monkeypa
     fake_langfuse.enable("create_prompt")
     fake_langfuse.enable("list_prompts")
     dspy.settings.configure(lm=_scripted_lm({
-        "rationale": "A wins.", "confidence": "mid", "verdict": "a-marginally-better",
+        "rationale": "A wins.", "confidence": "mid", "verdict": "a-wins",
     }))
 
     import importlib, judgement, json, sqlite3
@@ -116,7 +116,7 @@ def test_run_for_pending_uses_match_judge(tmp_data_home, fake_langfuse, monkeypa
     by_name = dict(db.execute(
         "SELECT name, value FROM score WHERE rating_id=?", (rid,)
     ).fetchall())
-    assert by_name["judgement.verdict"] == "a-marginally-better"
+    assert by_name["judgement.verdict"] == "a-wins"
     assert by_name["judgement.confidence"] == "mid"
 
 
@@ -177,7 +177,7 @@ def test_domain_pending_uses_its_category_specific_judge_prompt(
         def __call__(self, **cards):
             seen_cards.append(cards)
             return SimpleNamespace(
-                verdict="a-marginally-better",
+                verdict="a-wins",
                 confidence="mid",
                 rationale="A better matches the security lens.",
             )
@@ -211,7 +211,7 @@ def test_queue_rows_use_their_own_model_without_global_leak(
 
     db = sqlite3.connect(str(tmp_data_home / "judgements.db"))
     template_id = db.execute(
-        "SELECT id FROM eval_template WHERE name='card-prioritizer-v0'"
+        "SELECT id FROM eval_template WHERE name='pair-wheel-v2'"
     ).fetchone()[0]
     db.execute("DELETE FROM job_configuration WHERE rater_type='llm'")
     for model in ("model-a", "model-b"):
@@ -247,7 +247,7 @@ def test_queue_rows_use_their_own_model_without_global_leak(
         def __call__(self, **_cards):
             seen_lms.append(dspy.settings.lm)
             return SimpleNamespace(
-                verdict="tie-both-strong", confidence="mid", rationale="Comparable."
+                verdict="tie", confidence="mid", rationale="Comparable."
             )
 
     built = {}

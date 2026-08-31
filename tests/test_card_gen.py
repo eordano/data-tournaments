@@ -4,15 +4,13 @@ import pytest
 
 from tests.conftest import _scripted_lm
 
-
 def test_card_model_validates_required_fields():
     from bin.generators.card_gen import Card
-    Card(title="t", body="b")  # ok
+    Card(title="t", body="b")
     with pytest.raises(Exception):
-        Card(body="b")  # missing title
+        Card(body="b")
     with pytest.raises(Exception):
-        Card(title="t")  # missing body
-
+        Card(title="t")
 
 def test_card_optional_source_ref():
     from bin.generators.card_gen import Card
@@ -20,7 +18,6 @@ def test_card_optional_source_ref():
     assert c.source_ref == "path:42"
     c2 = Card(title="t", body="b")
     assert c2.source_ref is None
-
 
 def test_card_gen_loads_prompt_from_langfuse(fake_langfuse, monkeypatch):
     fake_langfuse.add_prompt(
@@ -33,7 +30,6 @@ def test_card_gen_loads_prompt_from_langfuse(fake_langfuse, monkeypatch):
     from bin.generators.card_gen import CardGen
     g = CardGen(prompt_name="card-generator:memory")
     assert "memories" in g.signature.instructions.lower()
-
 
 def test_card_gen_forward_returns_cards_list(fake_langfuse, monkeypatch):
     fake_langfuse.add_prompt("card-generator:x", text="extract", version=1, labels=["production"])
@@ -53,7 +49,6 @@ def test_card_gen_forward_returns_cards_list(fake_langfuse, monkeypatch):
     assert result.cards[0].title == "Card one"
     assert result.cards[1].source_ref is None
 
-
 def test_card_gen_coerces_dict_items(fake_langfuse, monkeypatch):
     """If DSPy hands back plain dicts (older adapters), forward() coerces them
     into Card pydantic models."""
@@ -71,7 +66,6 @@ def test_card_gen_coerces_dict_items(fake_langfuse, monkeypatch):
     titles = [c.title for c in result.cards]
     assert titles == ["valid", "another"]
     assert all(isinstance(c, Card) for c in result.cards)
-
 
 def test_card_gen_empty_returns_empty_list(fake_langfuse, monkeypatch):
     fake_langfuse.add_prompt("card-generator:x", text="extract", version=1, labels=["production"])

@@ -1,7 +1,7 @@
 """Tests for the seed-prompt migration: instructions blob → Langfuse Prompts.
 
 After the migration:
-- The rubric is renamed `code-style-tournament` → `card-prioritizer-v0`.
+- The seeded rubric is `pair-wheel-v2`; `code-style-tournament` is gone.
 - The `instructions` text lives in Langfuse Prompts as `judge-instructions:production`.
 - `eval_template.output_definition` no longer carries an `instructions` key.
 - `eval_template` gains a `langfuse_prompt_name` column pointing at the prompt.
@@ -38,7 +38,7 @@ def test_init_db_is_idempotent(fresh_fabric, fake_langfuse, monkeypatch):
     judgement.init_db()
     assert fake_langfuse.versions("judge-instructions") == [1]
     db = sqlite3.connect(str(fresh_fabric))
-    n = db.execute("SELECT COUNT(*) FROM eval_template WHERE name='card-prioritizer-v0'").fetchone()[0]
+    n = db.execute("SELECT COUNT(*) FROM eval_template WHERE name='pair-wheel-v2'").fetchone()[0]
     assert n == 1
 
 
@@ -49,18 +49,20 @@ def test_eval_template_has_langfuse_prompt_name_column(fresh_fabric):
 
 
 def test_seeded_rubric_points_at_langfuse_prompt(fresh_fabric):
+    import judgement
+
     db = sqlite3.connect(str(fresh_fabric))
     row = db.execute(
-        "SELECT langfuse_prompt_name FROM eval_template WHERE name='card-prioritizer-v0'"
+        "SELECT langfuse_prompt_name FROM eval_template WHERE name='pair-wheel-v2'"
     ).fetchone()
     assert row is not None
-    assert row[0] == "judge-instructions"
+    assert row[0] == judgement.PAIR_WHEEL_PROMPT_NAME == "judge-instructions:pair-wheel-v2"
 
 
 def test_output_definition_no_longer_carries_instructions(fresh_fabric):
     db = sqlite3.connect(str(fresh_fabric))
     raw = db.execute(
-        "SELECT output_definition FROM eval_template WHERE name='card-prioritizer-v0'"
+        "SELECT output_definition FROM eval_template WHERE name='pair-wheel-v2'"
     ).fetchone()[0]
     outdef = json.loads(raw)
     assert "instructions" not in outdef
@@ -77,22 +79,59 @@ def test_old_rubric_name_is_not_seeded(fresh_fabric):
     assert row[0] == 0
 
 
-def test_init_db_seeds_human_and_top_three_llm_configs(fresh_fabric):
+def test_init_db_seeds_one_human_and_one_machine_opinion(fresh_fabric):
+    """One enqueue must fan out to exactly two rows, not four.
+
+    The panel exists to produce human-versus-machine disagreement and one
+    machine opinion produces it; three turned a 33-item campaign into ~288
+    machine judgements for a spread nothing reads.
+    """
     import judgement
 
-    # Re-running init exercises the existing-database sync path and must not
-    # create duplicate raters.
     judgement.init_db()
     db = sqlite3.connect(str(fresh_fabric))
     rows = db.execute("""
         SELECT c.rater_type, json_extract(c.rater_config, '$.model') AS model
         FROM job_configuration c
         JOIN eval_template t ON t.id = c.template_id
-        WHERE t.name='card-prioritizer-v0' AND c.status='active'
+        WHERE t.name='pair-wheel-v2' AND c.status='active'
     """).fetchall()
-    assert sorted(model for rater_type, model in rows if rater_type == "llm") == [
-        "anthropic/claude-opus-5",
-        "moonshotai/kimi-k3",
-        "z-ai/glm-5.2",
-    ]
+    assert [model for rater_type, model in rows if rater_type == "llm"] == list(
+        judgement.DEFAULT_JUDGE_PANEL_MODELS
+    )
+    assert len(judgement.DEFAULT_JUDGE_PANEL_MODELS) == 1, (
+        judgement.ONE_MACHINE_OPINION_IS_ENOUGH_TO_DISAGREE_WITH_A_HUMAN
+    )
     assert sum(rater_type == "human" for rater_type, _model in rows) == 1
+    assert len(rows) == 2
+
+
+def test_a_widened_panel_seeds_a_row_per_model_and_narrowing_archives_it(
+    fresh_fabric, monkeypatch
+):
+    """The seeding stays trivially widenable: the panel slice is the dial."""
+    import judgement
+
+    monkeypatch.setattr(
+        judgement, "DEFAULT_JUDGE_PANEL_MODELS",
+        judgement.FRONTIER_OPENROUTER_MODELS[:3],
+    )
+    judgement.init_db()
+    db = sqlite3.connect(str(fresh_fabric))
+    widened = db.execute("""
+        SELECT json_extract(c.rater_config, '$.model') FROM job_configuration c
+        JOIN eval_template t ON t.id = c.template_id
+        WHERE t.name='pair-wheel-v2' AND c.status='active' AND c.rater_type='llm'
+    """).fetchall()
+    assert sorted(m for (m,) in widened) == sorted(
+        judgement.FRONTIER_OPENROUTER_MODELS[:3]
+    )
+
+    monkeypatch.undo()
+    judgement.init_db()
+    narrowed = db.execute("""
+        SELECT json_extract(c.rater_config, '$.model') FROM job_configuration c
+        JOIN eval_template t ON t.id = c.template_id
+        WHERE t.name='pair-wheel-v2' AND c.status='active' AND c.rater_type='llm'
+    """).fetchall()
+    assert [m for (m,) in narrowed] == list(judgement.DEFAULT_JUDGE_PANEL_MODELS)

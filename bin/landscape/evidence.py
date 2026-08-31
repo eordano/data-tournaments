@@ -28,7 +28,6 @@ from bin.workorder import WorkOrderLink
 
 MAX_EXCERPT_CHARS = 2000
 
-
 class SourceType(str, Enum):
     GIT_REPO = "git_repo"
     GITHUB_ISSUE = "github_issue"
@@ -40,12 +39,10 @@ class SourceType(str, Enum):
     API = "api"
     MCP_RESOURCE = "mcp_resource"
 
-
 class TrustTier(str, Enum):
     TIER1_SYSTEM = "tier1_system"
     TIER2_INTERNAL = "tier2_internal"
     TIER3_EXTERNAL = "tier3_external"
-
 
 class BrowsableLink(WorkOrderLink):
     """WorkOrderLink (https-only validation inherited) frozen for use inside
@@ -53,17 +50,16 @@ class BrowsableLink(WorkOrderLink):
 
     model_config = pydantic.ConfigDict(frozen=True)
 
-
 class EvidenceRef(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(frozen=True)
 
     source_type: SourceType
     canonical_uri: str
-    revision: str = ""  # commit sha, issue updated_at etag, build number, …
-    retrieved_at: str = ""  # ISO-8601, stamped by the retrieving system
+    revision: str = ""
+    retrieved_at: str = ""
     trust_tier: TrustTier
-    excerpt: str = ""  # bounded; the digest covers it
-    browsable_link: Optional[BrowsableLink] = None  # https-only, human-facing
+    excerpt: str = ""
+    browsable_link: Optional[BrowsableLink] = None
     why_selected: str = ""
 
     @pydantic.field_validator("canonical_uri")

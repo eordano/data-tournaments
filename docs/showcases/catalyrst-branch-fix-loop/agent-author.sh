@@ -1,16 +1,7 @@
 #!/bin/sh
-# CommandBackend wrapper: a REAL coding agent authors the fix in the
-# candidate worktree (cwd = detached worktree at BASE_SHA, branch checked out).
-# Env from branch_author: WORKORDER_REF, BASE_SHA, BRANCH_NAME.
-#
-# Honest-failure contract: nonzero exit or empty diff => AuthoringError
-# upstream — never fabricate a commit here.
 set -eu
 
 WO_FILE="${AGENT_WORKORDER_FILE:?AGENT_WORKORDER_FILE must point at the WorkOrder markdown}"
-# The nix 'sandboxed-agents' wrappers (claude/codex/opencode) call
-# sandbox-exec, which cannot nest inside this environment — use the
-# documented unsandboxed sibling binary.
 AGENT="${AGENT_CLI:-claude-achtung-achtung}"
 
 PROMPT="You are fixing one bug in this Rust workspace (you are on branch ${BRANCH_NAME} at base ${BASE_SHA}).

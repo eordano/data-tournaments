@@ -6,7 +6,7 @@
       "branch_name": "fix/w11-cid-exact-length",
       "backend": "command",
       "backend_config": {
-        "argv": ["bash", "/Users/user/Projects/data-tournaments/docs/showcases/catalyrst-branch-fix-loop/agent-author.sh"],
+        "argv": ["bash", "~/Projects/data-tournaments/docs/showcases/catalyrst-branch-fix-loop/agent-author.sh"],
         "timeout_s": 600
       }
     },

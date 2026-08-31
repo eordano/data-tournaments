@@ -33,14 +33,12 @@ SNAPSHOT = LandscapeSnapshot(
     evidence=(TIER1, TIER2, TIER3),
 )
 
-
 class TestRoleShaping:
     def test_executor_excludes_tier3_entirely(self):
         pack = build_pack(SNAPSHOT, Role.EXECUTOR)
         tiers = {ref.trust_tier for ref in pack.evidence}
         assert TrustTier.TIER3_EXTERNAL not in tiers
         assert {TIER1.digest, TIER2.digest} == {r.digest for r in pack.evidence}
-        # Not even a trace in the flags or labels:
         assert pack.flagged_evidence_ids == ()
         assert TIER3.id not in pack.tier_labels
 
@@ -68,7 +66,6 @@ class TestRoleShaping:
     def test_role_accepts_string_value(self):
         assert build_pack(SNAPSHOT, "executor").role is Role.EXECUTOR  # type: ignore[arg-type]
 
-
 class TestDigests:
     def test_same_snapshot_same_role_same_digest(self):
         assert (
@@ -95,7 +92,6 @@ class TestDigests:
             != build_pack(changed, Role.CREATOR).digest
         )
 
-
 class TestImmutability:
     def test_pack_mutation_raises(self):
         pack = build_pack(SNAPSHOT, Role.EXECUTOR)
@@ -106,7 +102,6 @@ class TestImmutability:
         with pytest.raises(pydantic.ValidationError):
             pack.snapshot_digest = "0" * 64
 
-
 class TestRoundTrip:
     def test_round_trip_preserves_digest(self):
         pack = build_pack(SNAPSHOT, Role.JUDGE)
@@ -115,7 +110,6 @@ class TestRoundTrip:
         assert again.digest == pack.digest
         json_again = ContextPack.model_validate_json(pack.model_dump_json())
         assert json_again.digest == pack.digest
-
 
 class TestNoAuthorityState:
     def test_no_approval_or_authorization_fields(self):

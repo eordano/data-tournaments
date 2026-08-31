@@ -7,30 +7,30 @@
     }
   ],
   "evidence_refs_frozen": [
-    "REDACTED",
-    "REDACTED",
-    "REDACTED",
-    "REDACTED",
-    "REDACTED"
+    "358bf2dcb46dc3df",
+    "8221a3c678f9b6bb",
+    "8e903d5a5149194f",
+    "ce26c0483e0fad61",
+    "edec3373e088f434"
   ],
   "audit_events": [
     {
       "id": 1,
       "temporal_workflow_id": "branchfix:fix/retry-deadline-reset:fcab9af9c0be",
       "decision": "approved",
-      "approver": "esteban"
+      "approver": "changeme"
     },
     {
       "id": 2,
       "temporal_workflow_id": "branchfix:fix/retry-deadline-reset:0f4b6bf3df94",
       "decision": "approved",
-      "approver": "esteban"
+      "approver": "changeme"
     },
     {
       "id": 3,
       "temporal_workflow_id": "release:bfl-repo:0f4b6bf3df945e621f87ed7114d8306bc9c7e40d",
       "decision": "approved",
-      "approver": "esteban"
+      "approver": "changeme"
     }
   ],
   "workflow_runs": [

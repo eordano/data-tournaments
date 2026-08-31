@@ -94,5 +94,7 @@ a subtle caption under the header. Nothing else in the aside survives.
 - Append-only everywhere: revisions add rows, never touch old ones.
 - No secret values on any environment surface — names/presence only.
 - Legacy routes keep working (redirects, not 404s).
-- card-prioritizer-v0 rendering unchanged.
-- Gates: pytest 743/9 clean-env baseline, mix precommit 294/0 baseline.
+- Rubric rendering stays data-driven: a retired rubric's stored rows keep
+  rendering under the vocabulary they were judged with, and no surface
+  names a rubric it has not read out of eval_template.
+- Gates: pytest and mix precommit both clean; see the suites for counts.

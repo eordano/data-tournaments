@@ -7,7 +7,6 @@ from bin.context_playbook import (
     split_prompt,
 )
 
-
 def test_playbook_round_trip_preserves_seed_and_entries():
     entries = merge_entries(
         [],
@@ -26,7 +25,6 @@ def test_playbook_round_trip_preserves_seed_and_entries():
     assert parsed[0].section == "EVIDENCE CHECKS"
     assert START_MARKER in rendered and END_MARKER in rendered
 
-
 def test_merge_is_deterministic_and_deduplicates_lessons():
     delta = {
         "section": "mistake",
@@ -38,7 +36,6 @@ def test_merge_is_deterministic_and_deduplicates_lessons():
     assert len(second) == 1
     assert second[0].id == first[0].id
     assert second[0].helpful == 1
-
 
 def test_merge_reinforce_and_weaken_update_counters_by_id_or_content():
     base = merge_entries(
@@ -57,7 +54,6 @@ def test_merge_reinforce_and_weaken_update_counters_by_id_or_content():
     assert weakened[0].harmful == 1
     assert weakened[0].helpful == 1
 
-
 def test_merge_retire_removes_entry_and_unknown_targets_are_ignored():
     base = merge_entries(
         [],
@@ -66,22 +62,17 @@ def test_merge_retire_removes_entry_and_unknown_targets_are_ignored():
     retired = merge_entries(base, [{"op": "retire", "id": base[0].id}])
     assert retired == []
 
-    # Unknown targets must not raise or mutate anything.
     assert merge_entries(base, [{"op": "retire", "id": "str-0000000000"}]) == base
     assert merge_entries(base, [{"op": "reinforce", "id": "str-0000000000"}]) == base
-
 
 def test_merge_prunes_entries_whose_harm_outweighs_help():
     base = merge_entries(
         [],
         [{"section": "strategy", "content": "Prefer findings whose reproduction steps are deterministic end to end."}],
     )
-    # harmful=2, helpful=0 -> total evidence 2 < PRUNE_MIN_EVIDENCE keeps it.
     weakened = merge_entries(base, [{"op": "weaken", "id": base[0].id}] * 2)
     assert len(weakened) == 1
-    # Third strike crosses the evidence threshold with harmful > helpful.
     assert merge_entries(weakened, [{"op": "weaken", "id": base[0].id}]) == []
-
 
 def test_domain_scoped_entry_round_trips_through_render_and_split():
     entries = merge_entries(
@@ -104,10 +95,8 @@ def test_domain_scoped_entry_round_trips_through_render_and_split():
     assert base == "Seed rubric."
     assert parsed[0].domain == "explorer-bugs"
     assert parsed[0].content == entries[0].content
-    # Provenance is deliberately NOT rendered into the runtime prompt.
     assert "run-42" not in rendered
     assert parsed[0].provenance == ""
-
 
 def test_unknown_ops_are_rejected_not_coerced_to_add():
     result = merge_entries(
@@ -122,7 +111,6 @@ def test_unknown_ops_are_rejected_not_coerced_to_add():
     )
     assert result == []
 
-
 def test_entries_for_domain_scopes_lessons():
     entries = merge_entries(
         [],
@@ -134,10 +122,8 @@ def test_entries_for_domain_scopes_lessons():
     )
     explorer = entries_for_domain(entries, "explorer-bugs")
     assert {e.domain for e in explorer} == {"", "explorer-bugs"}
-    # Global prompts must never inherit domain-scoped lessons.
     unscoped = entries_for_domain(entries, "")
     assert [e.domain for e in unscoped] == [""]
-
 
 def _seed_scoped_playbook():
     """One global entry plus one entry each in two domains."""
@@ -156,7 +142,6 @@ def _seed_scoped_playbook():
         domain="style-review",
     )
 
-
 def test_scoped_merge_cannot_touch_global_or_foreign_entries():
     entries = _seed_scoped_playbook()
     global_entry = next(e for e in entries if e.domain == "")
@@ -174,7 +159,6 @@ def test_scoped_merge_cannot_touch_global_or_foreign_entries():
     assert {e.id for e in attacked} == {e.id for e in entries}
     assert all(e.helpful == 0 and e.harmful == 0 for e in attacked)
 
-
 def test_scoped_merge_can_manage_its_own_entries():
     entries = _seed_scoped_playbook()
     mine = next(e for e in entries if e.domain == "explorer-bugs")
@@ -190,7 +174,6 @@ def test_scoped_merge_can_manage_its_own_entries():
     assert mine.id not in {e.id for e in retired}
     assert len(retired) == len(entries) - 1
 
-
 def test_identical_content_coexists_across_domains_with_distinct_ids():
     content = "Prefer evidence anchored to a concrete source reference over prose."
     entries = merge_entries([], [{"section": "evidence", "content": content}])
@@ -200,15 +183,12 @@ def test_identical_content_coexists_across_domains_with_distinct_ids():
     assert len(entries) == 2
     assert len({e.id for e in entries}) == 2
     assert {e.domain for e in entries} == {"", "explorer-bugs"}
-    # And the rendered form round-trips both.
     base, parsed = split_prompt(render_prompt("Seed.", entries))
     assert len(parsed) == 2
-
 
 def test_scoped_merge_does_not_prune_untouched_foreign_entry():
     from bin.context_playbook import PlaybookEntry
 
-    # A foreign-domain entry that is already past the pruning threshold.
     rotten = PlaybookEntry(
         id="str-aaaaaaaaaa",
         section="STRATEGIES & INSIGHTS",
@@ -223,6 +203,5 @@ def test_scoped_merge_does_not_prune_untouched_foreign_entry():
         domain="explorer-bugs",
     )
     assert rotten.id in {e.id for e in result}
-    # ...but the owning domain's merge does prune it.
     owned = merge_entries([rotten], [], domain="style-review")
     assert owned == []

@@ -5,14 +5,16 @@ defmodule TournamentUi.Browser do
   symlinks cannot escape the sandbox.
   """
 
-  @default_roots [
-    "/Users/user/projects",
-    "/tmp"
-  ]
+  defp default_roots do
+    case System.user_home() do
+      nil -> ["/tmp"]
+      home -> [Path.join(home, "projects"), "/tmp"]
+    end
+  end
 
   def roots do
     case System.get_env("TOURNAMENT_BROWSE_ROOTS") do
-      nil -> @default_roots
+      nil -> default_roots()
       s -> s |> String.split(":", trim: true) |> Enum.map(&Path.expand/1)
     end
   end

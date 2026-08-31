@@ -8,7 +8,9 @@ Design rules (2026-08-17 user session):
   risks. ``WorkOrderDraft`` has exactly those fields, so the model cannot
   override provenance even if it tries (extra keys are ignored).
 * The SYSTEM supplies provenance: domain, creation date, generation model,
-  repository base commits / dirty state, source_ref. ``finalize_work_order``
+  repository base commits / dirty state, source_ref, and the tournament
+  ``standing`` the item earned by pairwise comparison — the only orderable
+  field the implementation queue may schedule on. ``finalize_work_order``
   stamps these; links / requester / reviewers stay empty unless a human or
   an integration provides them — empty is better than hallucinated.
 * Markdown is RENDERED deterministically from the structured object
@@ -28,13 +30,11 @@ SCHEMA_VERSION = 1
 WORK_TYPES = ("bug-fix", "feature", "change-request", "refactor", "investigation")
 PRIORITIES = ("P0", "P1", "P2", "P3")
 
-
 class RepoSnapshot(pydantic.BaseModel):
     root: str
     remote: str = ""
     base_commit: str = ""
     dirty: bool = False
-
 
 class WorkOrderLink(pydantic.BaseModel):
     """A clickable context link. System-derived or human-supplied — never
@@ -42,7 +42,6 @@ class WorkOrderLink(pydantic.BaseModel):
 
     label: str
     url: str
-    # repository | commit | source | pr | issue | chat | ci | docs | other
     kind: str = "other"
 
     @pydantic.field_validator("url")
@@ -52,7 +51,6 @@ class WorkOrderLink(pydantic.BaseModel):
         if not v.startswith("https://"):
             raise ValueError("only https:// links are allowed")
         return v
-
 
 def normalize_remote_url(remote: str) -> str:
     """Normalize a git remote to a browsable https URL ('' when impossible).
@@ -76,14 +74,12 @@ def normalize_remote_url(remote: str) -> str:
         return "https://" + rest
     if r.startswith("git@"):
         r = r[len("git@"):]
-    # scp form: host:org/repo (a colon before any slash)
     head, sep, tail = r.partition(":")
     if sep and "/" not in head and tail and not tail[0].isdigit():
         return f"https://{head}/{tail}"
     if "/" in r and "." in r.split("/", 1)[0]:
         return "https://" + r
     return ""
-
 
 def derive_links(
     repos: list[RepoSnapshot], source_ref: str = ""
@@ -122,10 +118,9 @@ def derive_links(
                         )
                     )
                 except ValueError:
-                    pass  # source_ref outside the repo — no permalink
-        break  # primary repo only; multi-repo callers pass explicit links
+                    pass
+        break
     return links
-
 
 def _git(root: str, *args: str) -> str:
     try:
@@ -136,8 +131,6 @@ def _git(root: str, *args: str) -> str:
             timeout=10,
             env={
                 **os.environ,
-                # The macOS sandbox blocks ~/.gitconfig; neither user nor
-                # system config affects the read-only queries used here.
                 "GIT_CONFIG_GLOBAL": "/dev/null",
                 "GIT_CONFIG_SYSTEM": "/dev/null",
             },
@@ -145,7 +138,6 @@ def _git(root: str, *args: str) -> str:
         return proc.stdout.strip() if proc.returncode == 0 else ""
     except (OSError, subprocess.TimeoutExpired):
         return ""
-
 
 def capture_repo_snapshot(path: str) -> Optional[RepoSnapshot]:
     """Snapshot the git repo containing ``path`` (None when not a repo).
@@ -163,6 +155,65 @@ def capture_repo_snapshot(path: str) -> Optional[RepoSnapshot]:
         dirty=bool(_git(toplevel, "status", "--porcelain")),
     )
 
+class TournamentStanding(pydantic.BaseModel):
+    """The position an item earned by pairwise comparison, carried onto the
+    work order so the implementation queue can order on it.
+
+    System-only: ``WorkOrderDraft`` has no ``standing`` field, so a model
+    cannot award itself a position. Swiss scoring
+    (docs/design/priority-tournament.md): a win is 3, a draw 1, a loss 0; a
+    discarded item leaves the pool instead of scoring zero, so it never
+    carries a standing at all. ``pair_keys`` are the sha256 pair identities
+    this item was judged under — the same keys the no-rematch rule is
+    enforced with, and the join key a beat outcome is later recorded against.
+    """
+
+    points: int = 0
+    played: int = 0
+    rank: int = 0
+    rounds: int = 0
+    pool_id: str = ""
+    pair_keys: list[str] = []
+
+    @pydantic.field_validator("points", "played", "rank", "rounds")
+    @classmethod
+    def _non_negative(cls, v: int, info) -> int:
+        if v < 0:
+            raise ValueError(f"{info.field_name} cannot be negative")
+        return v
+
+    @pydantic.model_validator(mode="after")
+    def _consistent(self) -> "TournamentStanding":
+        if self.points > 3 * self.played:
+            raise ValueError(
+                f"points={self.points} exceeds the maximum 3 per match for "
+                f"played={self.played} (a win is 3, a draw 1, a loss 0)"
+            )
+        if len(self.pair_keys) > self.played:
+            raise ValueError(
+                f"{len(self.pair_keys)} pair keys for played={self.played}; "
+                "a match has at most one pair key and a bye has none"
+            )
+        if len(set(self.pair_keys)) != len(self.pair_keys):
+            raise ValueError(
+                "duplicate pair key: two items meet at most once, so a "
+                "repeated pair key means a rematch was scored"
+            )
+        if self.rank and not self.played:
+            raise ValueError(
+                "a rank without a played match is a position nothing "
+                "established; leave rank 0 until the item has been compared"
+            )
+        return self
+
+    def summary(self) -> str:
+        parts = [f"rank {self.rank}" if self.rank else "unranked"]
+        parts.append(f"{self.points} pts from {self.played} played")
+        if self.rounds:
+            parts.append(f"{self.rounds} rounds")
+        if self.pool_id:
+            parts.append(f"pool {self.pool_id}")
+        return " · ".join(parts)
 
 class WorkOrderDraft(pydantic.BaseModel):
     """The model-supplied portion of a WorkOrder. No provenance fields on
@@ -197,7 +248,6 @@ class WorkOrderDraft(pydantic.BaseModel):
         v = v.strip().upper()
         return v if v in PRIORITIES else "P2"
 
-
 class WorkOrder(WorkOrderDraft):
     """A finalized work order: model judgment + system provenance."""
 
@@ -207,11 +257,10 @@ class WorkOrder(WorkOrderDraft):
     models: list[str] = []
     repos: list[RepoSnapshot] = []
     source_ref: str = ""
-    # System-derived or human/integration-supplied — never model-filled.
     links: list[WorkOrderLink] = []
     requester: str = ""
     reviewers: list[str] = []
-
+    standing: Optional[TournamentStanding] = None
 
 def finalize_work_order(
     draft: WorkOrderDraft,
@@ -222,6 +271,7 @@ def finalize_work_order(
     repos: list[RepoSnapshot],
     source_ref: str = "",
     extra_links: Optional[list[WorkOrderLink]] = None,
+    standing: Optional[TournamentStanding] = None,
 ) -> WorkOrder:
     """Stamp system provenance onto a model draft.
 
@@ -229,7 +279,9 @@ def finalize_work_order(
     exclusively from the keyword arguments (i.e. from system code). Links are
     derived from the captured git state (repo / commit / source permalink);
     ``extra_links`` lets callers append human- or integration-supplied ones
-    (PRs, issues, Slack, CI).
+    (PRs, issues, Slack, CI). ``standing`` is the tournament position the
+    item earned; a work order that has not been through a tournament carries
+    None rather than a fabricated zero.
     """
     return WorkOrder(
         **draft.model_dump(),
@@ -239,19 +291,27 @@ def finalize_work_order(
         repos=list(repos),
         source_ref=source_ref,
         links=derive_links(list(repos), source_ref) + list(extra_links or []),
+        standing=standing,
     )
-
 
 def to_markdown(wo: WorkOrder) -> str:
     """Deterministic markdown rendering (no title heading — callers display
-    the title separately; repeating it here would double it in the UI)."""
-    priority = wo.priority + (f" — {wo.priority_rationale}" if wo.priority_rationale else "")
+    the title separately; repeating it here would double it in the UI).
+
+    NO ABSOLUTE SCORE APPEARS HERE. This markdown is the body a judge is shown,
+    and a judge who can see a score is comparing scores instead of items. That
+    rule retired ``standing`` first; ``priority`` follows it for the identical
+    reason and a worse one. Standing is at least a measurement, whereas priority
+    is a self-assessed guess by a model that saw one item and could not see the
+    other thirty-two -- and it rendered in the loudest colour on the page.
+    Scrubbing the payload key cannot reach a score written into prose, so the
+    only place this can be fixed is where the prose is composed. Both fields
+    stay available to the operator views, which read the object and not this.
+    """
     meta = [
         f"**Domain:** {wo.domain or '—'} · **Created:** {wo.created_at or '—'} · "
-        f"**Priority:** {priority} · **Type:** {wo.work_type}"
+        f"**Type:** {wo.work_type}"
     ]
-    # Links come right after the header: they are the fastest route to real
-    # context (repo, pinned commit, source permalink) and must not be buried.
     if wo.links:
         meta.append(
             "**Links:** " + " · ".join(f"[{l.label}]({l.url})" for l in wo.links)

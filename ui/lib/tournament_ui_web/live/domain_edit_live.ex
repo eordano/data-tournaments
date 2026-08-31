@@ -153,6 +153,7 @@ defmodule TournamentUiWeb.DomainEditLive do
     ~H"""
     <.workspace_page
       current={:domains}
+      flash={@flash}
       max_width="max-w-3xl"
       title={"Edit " <> @spec.name}
       subtitle={"Configure source and evaluation lens. Prompt edits create a version in #{@prompt_backend.label}."}

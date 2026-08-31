@@ -20,7 +20,6 @@ from tests.test_fix_branches import (
     _validate_current,
 )
 
-
 @pytest.fixture
 def fb(tmp_data_home):
     from bin import fix_branches as mod
@@ -28,13 +27,11 @@ def fb(tmp_data_home):
     mod.init()
     return mod
 
-
 @pytest.fixture
 def catalog(tmp_data_home):
     from bin import catalog as mod
 
     return mod
-
 
 @pytest.fixture
 def ship(fb):
@@ -42,11 +39,9 @@ def ship(fb):
 
     return mod
 
-
 @pytest.fixture
 def repo(tmp_path) -> Path:
     return _make_repo(tmp_path)
-
 
 @pytest.fixture
 def stub_client(tmp_path):
@@ -62,7 +57,6 @@ def stub_client(tmp_path):
     )
     return {"cmd": f"{sys.executable} {script}", "record": record}
 
-
 @pytest.fixture
 def failing_client(tmp_path):
     """A stub client that exits nonzero (temporal down, etc.)."""
@@ -74,16 +68,14 @@ def failing_client(tmp_path):
     )
     return f"{sys.executable} {script}"
 
-
 def _approved_branch(fb, catalog, repo) -> int:
     """Register + validate + approve fix/widget; returns the branch id."""
     _make_fix_branch(repo)
     bid = fb.register_branch(str(repo), "fix/widget")
     _validate_current(fb, bid)
     _policy(catalog)
-    fb.record_review(bid, reviewer="esteban", decision="approve")
+    fb.record_review(bid, reviewer="changeme", decision="approve")
     return bid
-
 
 class TestShipAccepted:
     def test_approved_current_ships_with_derived_sha(self, fb, catalog, repo,
@@ -92,14 +84,13 @@ class TestShipAccepted:
         head = fb.get_branch(bid)["head_sha"]
         res = ship.ship_branch(
             bid,
-            requested_by="esteban",
+            requested_by="changeme",
             project="proj-x",
             domain="unity",
             client_cmd=stub_client["cmd"],
         )
-        # commit DERIVES from the record — never caller-supplied
         assert res["head_sha"] == head
-        assert res["repo"] == repo.name  # no origin remote -> basename
+        assert res["repo"] == repo.name
         assert res["workflow_id"] == f"release:{repo.name}:{head}"
         argv = json.loads(stub_client["record"].read_text())
         assert argv[0] == "start"
@@ -107,21 +98,17 @@ class TestShipAccepted:
         assert argv[2] == head
         assert argv[argv.index("--project") + 1] == "proj-x"
         assert argv[argv.index("--domain") + 1] == "unity"
-        assert argv[argv.index("--requested-by") + 1] == "esteban"
-        # a release is IN FLIGHT: 'shipping', not terminal 'shipped'
-        # ('shipped' means release-COMPLETED, projected by sync_completion)
+        assert argv[argv.index("--requested-by") + 1] == "changeme"
         assert fb.get_branch(bid)["status"] == "shipping"
-        # the ship row records the started workflow bound to the tested SHA
         row = fb.latest_ship(bid)
         assert row["id"] == res["ship_id"]
         assert row["workflow_id"] == res["workflow_id"]
         assert row["tested_sha"] == head
-        assert row["requested_by"] == "esteban"
+        assert row["requested_by"] == "changeme"
         assert row["approval_review_id"] is not None
         assert row["validation_id"] is not None
-        # a second ship of the same approval refuses while in flight
         with pytest.raises(ship.ShipRefused) as exc:
-            ship.ship_branch(bid, requested_by="esteban",
+            ship.ship_branch(bid, requested_by="changeme",
                              client_cmd=stub_client["cmd"])
         assert exc.value.reason == "ship-in-progress"
 
@@ -129,10 +116,9 @@ class TestShipAccepted:
                                      stub_client, monkeypatch):
         bid = _approved_branch(fb, catalog, repo)
         monkeypatch.setenv(ship.CLIENT_CMD_ENV, stub_client["cmd"])
-        res = ship.ship_branch(bid, requested_by="esteban")
+        res = ship.ship_branch(bid, requested_by="changeme")
         assert stub_client["record"].exists()
         assert res["repo"] == repo.name
-
 
 class TestShipRefused:
     def test_failed_branch_refused(self, fb, repo, ship, stub_client):
@@ -140,7 +126,7 @@ class TestShipRefused:
         bid = fb.register_branch(str(repo), "fix/widget")
         _validate_current(fb, bid, passed=False)
         with pytest.raises(ship.ShipRefused) as exc:
-            ship.ship_branch(bid, requested_by="esteban",
+            ship.ship_branch(bid, requested_by="changeme",
                              client_cmd=stub_client["cmd"])
         assert exc.value.reason == "failed"
         assert not stub_client["record"].exists()
@@ -148,10 +134,10 @@ class TestShipRefused:
     def test_rejected_branch_refused(self, fb, repo, ship, stub_client):
         _make_fix_branch(repo)
         bid = fb.register_branch(str(repo), "fix/widget")
-        fb.record_review(bid, reviewer="esteban", decision="reject",
+        fb.record_review(bid, reviewer="changeme", decision="reject",
                          rationale="wrong approach")
         with pytest.raises(ship.ShipRefused) as exc:
-            ship.ship_branch(bid, requested_by="esteban",
+            ship.ship_branch(bid, requested_by="changeme",
                              client_cmd=stub_client["cmd"])
         assert exc.value.reason == "rejected"
         assert not stub_client["record"].exists()
@@ -161,7 +147,7 @@ class TestShipRefused:
         bid = fb.register_branch(str(repo), "fix/widget")
         _validate_current(fb, bid)
         with pytest.raises(ship.ShipRefused) as exc:
-            ship.ship_branch(bid, requested_by="esteban",
+            ship.ship_branch(bid, requested_by="changeme",
                              client_cmd=stub_client["cmd"])
         assert exc.value.reason == "not-approved"
 
@@ -174,7 +160,7 @@ class TestShipRefused:
         fb.refresh_head(bid)
         assert fb.get_branch(bid)["status"] == "stale"
         with pytest.raises(ship.ShipRefused) as exc:
-            ship.ship_branch(bid, requested_by="esteban",
+            ship.ship_branch(bid, requested_by="changeme",
                              client_cmd=stub_client["cmd"])
         assert exc.value.reason == "stale"
         assert not stub_client["record"].exists()
@@ -188,25 +174,21 @@ class TestShipRefused:
         _git(repo, "checkout", "fix/widget")
         _commit(repo, "sneak.txt", "sneak\n", "sneak in after approval")
         _git(repo, "checkout", "main")
-        # NO refresh_head here — the record still reads 'approved'
         assert fb.get_branch(bid)["status"] == "approved"
         with pytest.raises(ship.ShipRefused) as exc:
-            ship.ship_branch(bid, requested_by="esteban",
+            ship.ship_branch(bid, requested_by="changeme",
                              client_cmd=stub_client["cmd"])
         assert exc.value.reason == "stale"
         assert not stub_client["record"].exists()
-        # and the record now reflects reality
         assert fb.get_branch(bid)["status"] == "stale"
 
     def test_client_failure_surfaces_no_false_success(self, fb, catalog, repo,
                                                       ship, failing_client):
         bid = _approved_branch(fb, catalog, repo)
         with pytest.raises(ship.ShipClientError, match="exited 3"):
-            ship.ship_branch(bid, requested_by="esteban",
+            ship.ship_branch(bid, requested_by="changeme",
                              client_cmd=failing_client)
-        # NOT flipped to shipped — the ship did not happen
         assert fb.get_branch(bid)["status"] == "approved"
-
 
 class TestRefusalMatrix:
     def test_shape_and_values_for_approved(self, fb, catalog, repo, ship):
@@ -241,11 +223,10 @@ class TestRefusalMatrix:
         _git(repo, "checkout", "fix/widget")
         _commit(repo, "late.txt", "late\n", "late")
         _git(repo, "checkout", "main")
-        m = ship.refusal_matrix(bid)  # refreshes internally
+        m = ship.refusal_matrix(bid)
         assert m["ship_allowed"] is False
         assert m["refusal_reason"] == "stale"
         assert m["gates"]["head-current"] is False
-
 
 class TestCli:
     def test_check_prints_matrix_json(self, fb, catalog, repo, ship, capsys):
@@ -260,7 +241,7 @@ class TestCli:
         bid = fb.register_branch(str(repo), "fix/widget")
         monkeypatch.setenv(ship.CLIENT_CMD_ENV, stub_client["cmd"])
         assert ship.main(["ship", "--id", str(bid),
-                          "--requested-by", "esteban"]) == 1
+                          "--requested-by", "changeme"]) == 1
         out = json.loads(capsys.readouterr().out)
         assert out["refused"] == "not-approved"
 
@@ -269,10 +250,9 @@ class TestCli:
         bid = _approved_branch(fb, catalog, repo)
         monkeypatch.setenv(ship.CLIENT_CMD_ENV, stub_client["cmd"])
         assert ship.main(["ship", "--id", str(bid),
-                          "--requested-by", "esteban"]) == 0
+                          "--requested-by", "changeme"]) == 0
         out = json.loads(capsys.readouterr().out)
         assert out["workflow_id"].startswith("release:")
-        # workflow STARTED -> 'shipping'; 'shipped' comes from sync
         assert fb.get_branch(bid)["status"] == "shipping"
 
     def test_ship_cli_repo_name_flag(self, fb, catalog, repo, ship,
@@ -280,7 +260,7 @@ class TestCli:
         bid = _approved_branch(fb, catalog, repo)
         monkeypatch.setenv(ship.CLIENT_CMD_ENV, stub_client["cmd"])
         assert ship.main(["ship", "--id", str(bid),
-                          "--requested-by", "esteban",
+                          "--requested-by", "changeme",
                           "--repo-name", "acme/widgets"]) == 0
         out = json.loads(capsys.readouterr().out)
         assert out["repo"] == "acme/widgets"
@@ -291,7 +271,7 @@ class TestCli:
         from bin import workflow_runs
 
         bid = _approved_branch(fb, catalog, repo)
-        res = ship.ship_branch(bid, requested_by="esteban",
+        res = ship.ship_branch(bid, requested_by="changeme",
                                client_cmd=stub_client["cmd"])
         rid = workflow_runs.start(
             temporal_workflow_id=res["workflow_id"], temporal_run_id="r1"
@@ -305,12 +285,11 @@ class TestCli:
     def test_sync_cli_no_run_row_exits_1(self, fb, catalog, repo, ship,
                                          stub_client, capsys):
         bid = _approved_branch(fb, catalog, repo)
-        ship.ship_branch(bid, requested_by="esteban",
+        ship.ship_branch(bid, requested_by="changeme",
                          client_cmd=stub_client["cmd"])
         assert ship.main(["sync", "--id", str(bid)]) == 1
         out = json.loads(capsys.readouterr().out)
         assert "no workflow_run row" in out["error"]
-
 
 class TestCompletionProjection:
     """sync_completion: workflow_run outcome -> fix_branch status
@@ -318,7 +297,7 @@ class TestCompletionProjection:
 
     def _shipped_branch(self, fb, catalog, repo, ship, stub_client) -> tuple:
         bid = _approved_branch(fb, catalog, repo)
-        res = ship.ship_branch(bid, requested_by="esteban",
+        res = ship.ship_branch(bid, requested_by="changeme",
                                client_cmd=stub_client["cmd"])
         return bid, res["workflow_id"]
 
@@ -378,7 +357,6 @@ class TestCompletionProjection:
         assert out["changed"] is False
         assert fb.get_branch(bid)["status"] == "approved"
 
-
 class TestReShip:
     """Re-ship semantics: a rolled-back branch may not ship again on the
     OLD approval — fresh validation + fresh approving review required."""
@@ -387,7 +365,7 @@ class TestReShip:
         from bin import workflow_runs
 
         bid = _approved_branch(fb, catalog, repo)
-        res = ship.ship_branch(bid, requested_by="esteban",
+        res = ship.ship_branch(bid, requested_by="changeme",
                                client_cmd=stub_client["cmd"])
         rid = workflow_runs.start(temporal_workflow_id=res["workflow_id"],
                                   temporal_run_id="r1")
@@ -400,7 +378,7 @@ class TestReShip:
                                                  ship, stub_client):
         bid = self._rolled_back(fb, catalog, repo, ship, stub_client)
         with pytest.raises(ship.ShipRefused) as exc:
-            ship.ship_branch(bid, requested_by="esteban",
+            ship.ship_branch(bid, requested_by="changeme",
                              client_cmd=stub_client["cmd"])
         assert exc.value.reason == "rolled-back"
 
@@ -410,10 +388,8 @@ class TestReShip:
         refuses — the status is 'rolled-back', never silently approved."""
         bid = self._rolled_back(fb, catalog, repo, ship, stub_client)
         _validate_current(fb, bid)
-        # record_validation does not clobber rolled-back... but assert the
-        # gateway refuses regardless of what the status shows
         with pytest.raises(ship.ShipRefused) as exc:
-            ship.ship_branch(bid, requested_by="esteban",
+            ship.ship_branch(bid, requested_by="changeme",
                              client_cmd=stub_client["cmd"])
         assert exc.value.reason in ("rolled-back", "not-approved")
 
@@ -421,19 +397,16 @@ class TestReShip:
                                                       repo, ship,
                                                       stub_client):
         bid = self._rolled_back(fb, catalog, repo, ship, stub_client)
-        # FRESH evidence at the current head: validation + approving review
         _validate_current(fb, bid)
-        fb.record_review(bid, reviewer="esteban", decision="approve",
+        fb.record_review(bid, reviewer="changeme", decision="approve",
                          rationale="re-validated after rollback")
-        res = ship.ship_branch(bid, requested_by="esteban",
+        res = ship.ship_branch(bid, requested_by="changeme",
                                client_cmd=stub_client["cmd"])
         assert fb.get_branch(bid)["status"] == "shipping"
-        # the new ship row consumed the NEW review/validation
         row = fb.latest_ship(bid)
         assert row["id"] == res["ship_id"]
         first = fb.get_branch(bid)["reviews"][0]
         assert row["approval_review_id"] > first["id"]
-
 
 class TestRepoIdentity:
     def test_origin_url_yields_org_slash_repo(self, fb, catalog, repo, ship,
@@ -441,7 +414,7 @@ class TestRepoIdentity:
         _git(repo, "remote", "add", "origin",
              "https://github.com/acme/catalyrst-e2e.git")
         bid = _approved_branch(fb, catalog, repo)
-        res = ship.ship_branch(bid, requested_by="esteban",
+        res = ship.ship_branch(bid, requested_by="changeme",
                                client_cmd=stub_client["cmd"])
         assert res["repo"] == "acme/catalyrst-e2e"
         argv = json.loads(stub_client["record"].read_text())
@@ -462,7 +435,7 @@ class TestRepoIdentity:
         _git(repo, "remote", "add", "origin",
              "https://github.com/acme/catalyrst-e2e.git")
         bid = _approved_branch(fb, catalog, repo)
-        res = ship.ship_branch(bid, requested_by="esteban",
+        res = ship.ship_branch(bid, requested_by="changeme",
                                repo_name="override/name",
                                client_cmd=stub_client["cmd"])
         assert res["repo"] == "override/name"

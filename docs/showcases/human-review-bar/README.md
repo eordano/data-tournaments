@@ -1,7 +1,7 @@
 # Showcase: The Human Review Bar, automated end-to-end (BASELINE RUN)
 
-Source artifact: https://claude.ai/code/artifact/1c5679a7-a496-46a8-91e9-eb97228358f6
-(local copy: corpus/dcl-bugsweeps-2026-08/workspaces/review-rules-aug16/review-bar-report.html —
+Source artifact: (private)
+(local copy: corpus/bugsweeps-2026-08/workspaces/review-rules-aug16/review-bar-report.html —
 the August 16 review-comment mining report that defined the manual bugsweep
 review bar: 26 review rules, contributor profiles, analyzer candidates.)
 
@@ -23,7 +23,7 @@ Status legend
 
 Environment
   DATA_TOURNAMENTS_HOME=/tmp/dt-fresh · UI :4070/:4080 (PROMPT_BACKEND=local,
-  DT_OPERATOR=esteban for approval) · Temporal :7233, queue hrb-showcase-20260817
+  DT_OPERATOR=changeme for approval) · Temporal :7233, queue hrb-showcase-20260817
 
 ## Step map: Human Review Bar -> platform automation (as run)
 
@@ -95,5 +95,5 @@ L8 This run compared two DIFFERENT bugs' WorkOrders in one pair — fine
 Repo HEAD during run: 51ea689 (evidence stamped at that commit) on top of
 609ea21. Data root /tmp/dt-fresh. Temporal workflow
 release:unity-explorer:51ea689, run 01a00f5e-4de5-7e7b-b1b5-7487cb8f7129.
-Judge domain hrb-relREDACTEDrk-order.
+Judge domain hrb-release-reliability (id 2), artifact=work-order.
 Fixtures: invented, sanitized (no real Sentry/Slack/user data).

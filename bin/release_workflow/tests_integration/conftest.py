@@ -28,13 +28,11 @@ import pytest_asyncio
 from temporalio.client import Client
 from temporalio.testing import WorkflowEnvironment
 
-# Repo root on sys.path so `from bin.release_workflow import ...` works.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 DEV_SERVER_TARGET = "localhost:7233"
-
 
 @pytest_asyncio.fixture(scope="session")
 async def env():
@@ -52,7 +50,6 @@ async def env():
         env = WorkflowEnvironment.from_client(client)
     yield env
     await env.shutdown()
-
 
 @pytest.fixture
 def data_home(tmp_path, monkeypatch) -> Path:

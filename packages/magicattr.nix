@@ -14,7 +14,8 @@ buildPythonPackage rec {
     owner = "frmdstryr";
     repo = "magicattr";
     tag = "v${version}";
-    hash = "REDACTED  };
+    hash = "sha256-hV425AnXoYL3oSYMhbXaF8VRe/B1s5f5noAZYz4MMwc=";
+  };
 
   build-system = [
     setuptools

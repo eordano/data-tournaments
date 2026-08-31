@@ -226,7 +226,7 @@ defmodule TournamentUiWeb.DomainNewLive do
       String.starts_with?(path, ["http://", "https://", "git@"]) ->
         {:error,
          "Root path looks like a URL. The filesystem source reads a local directory — " <>
-           "clone the repository first and point at the clone (e.g. /Users/user/src/repo)."}
+           "clone the repository first and point at the clone (e.g. /Users/you/src/repo)."}
 
       path == "" or not File.dir?(path) ->
         {:error, "Root path #{inspect(path)} is not a directory on this machine."}
@@ -294,6 +294,7 @@ defmodule TournamentUiWeb.DomainNewLive do
     ~H"""
     <.workspace_page
       current={:domains}
+      flash={@flash}
       max_width="max-w-3xl"
       title="New domain"
       subtitle={stage_subtitle(@stage)}
@@ -440,7 +441,7 @@ defmodule TournamentUiWeb.DomainNewLive do
                 <input
                   name="corpus_path"
                   value={@corpus_path}
-                  placeholder="/Users/user/projects/foo"
+                  placeholder="$HOME/projects/foo"
                   class="input input-bordered input-sm w-full font-mono"
                 />
               </label>
@@ -464,7 +465,7 @@ defmodule TournamentUiWeb.DomainNewLive do
                 <input
                   name="corpus_path"
                   value={@corpus_path}
-                  placeholder="/Users/user/.hermes/sessions.db"
+                  placeholder="$HOME/.hermes/sessions.db"
                   class="input input-bordered input-sm w-full font-mono"
                 />
               </label>

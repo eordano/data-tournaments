@@ -13,7 +13,7 @@ defmodule TournamentUi.LangfusePromptsTest do
         else: Application.delete_env(:tournament_ui, :prompt_backend)
     end)
 
-    # Tell Req to route to the test stub instead of langfuse.example.
+    # Tell Req to route to the test stub instead of langfuse.example.com.
     Application.put_env(:tournament_ui, :langfuse_host, "http://fake-langfuse.test")
     Application.put_env(:tournament_ui, :langfuse_public_key, "pk-fake")
     Application.put_env(:tournament_ui, :langfuse_secret_key, "sk-fake")
@@ -68,7 +68,9 @@ defmodule TournamentUi.LangfusePromptsTest do
   end
 
   test "local backend reads, lists, and promotes the shared prompts.json store" do
-    home = "/tmp/dt-local-prompts-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-local-prompts-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     previous_home = System.get_env("DATA_TOURNAMENTS_HOME")
     File.mkdir_p!(home)
 

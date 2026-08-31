@@ -4,19 +4,16 @@ a one-line description plus a peek at a few corpus samples.
 from __future__ import annotations
 import re
 from dataclasses import dataclass
-from typing import Any
 
 import dspy
 
 from bin import prompts as _prompts
-
 
 @dataclass
 class DomainDraft:
     domain_name: str
     generator_prompt: str
     judge_prompt: str
-
 
 class DomainBuilderSig(dspy.Signature):
     """Draft a new card-prioritization domain.
@@ -42,14 +39,12 @@ class DomainBuilderSig(dspy.Signature):
         desc="System prompt for the pair-comparison judge."
     )
 
-
 def _normalize_name(s: str) -> str:
     """lowercase, alphanumeric+hyphen, collapse runs, ≤64 chars."""
     s = s.lower().strip()
     s = re.sub(r"[^a-z0-9]+", "-", s)
     s = re.sub(r"-+", "-", s).strip("-")
     return s[:64]
-
 
 class DomainBuilder(dspy.Module):
     def __init__(self, prompt_name: str = "domain-builder",
@@ -58,8 +53,6 @@ class DomainBuilder(dspy.Module):
         try:
             instructions = _prompts.get(prompt_name, label=prompt_label)
         except LookupError:
-            # A fresh local install has no prompt versions yet. Use the same
-            # seed instructions that judgement.init_db publishes to Langfuse.
             from bin.judgement import SEED_DOMAIN_BUILDER_INSTRUCTIONS
             instructions = SEED_DOMAIN_BUILDER_INSTRUCTIONS
         self.signature = DomainBuilderSig.with_instructions(

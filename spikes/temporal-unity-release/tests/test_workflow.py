@@ -23,7 +23,6 @@ from workflow import UnityReleaseWorkflow, workflow_id_for
 
 REPO = "decentraland/unity-explorer"
 
-
 def _req(commit: str, env) -> ReleaseRequest:
     """24h approval / 30m monitor timers when time-skipping is available;
     seconds-scale real timers when falling back to a live dev server."""
@@ -36,11 +35,8 @@ def _req(commit: str, env) -> ReleaseRequest:
         monitor_window_seconds=30 * 60 if ts else 1.0,
     )
 
-
 def _commit() -> str:
-    # Unique commit per test so workflow_ids don't collide across runs.
     return uuid.uuid4().hex
-
 
 async def test_happy_path_approved_promotes(env):
     commit = _commit()
@@ -79,7 +75,6 @@ async def test_happy_path_approved_promotes(env):
     assert all(s.status == "ok" for s in result.stages)
     assert result.approval is not None and result.approval.approver == "alice"
 
-
 async def test_approval_timeout_rolls_back(env):
     """No signal ever arrives: the 24h durable timer fires (time-skipped)."""
     commit = _commit()
@@ -96,14 +91,12 @@ async def test_approval_timeout_rolls_back(env):
             id=workflow_id_for(REPO, commit),
             task_queue=task_queue,
         )
-        result = await handle.result()  # no signal sent
+        result = await handle.result()
 
     assert result.status == "rolled_back"
     assert "timed out" in result.reason
     assert result.stages[-1].stage == "rollback"
-    # Nothing after the approval gate ran.
     assert "build" not in [s.stage for s in result.stages]
-
 
 async def test_explicit_rejection_rolls_back(env):
     commit = _commit()
@@ -130,7 +123,6 @@ async def test_explicit_rejection_rolls_back(env):
     assert "rejected by bob" in result.reason
     assert result.stages[-1].stage == "rollback"
 
-
 async def test_activity_failure_retries_then_fails_workflow(env):
     """generate_workorders fails on every attempt: the LM_RETRY policy
     (max_attempts=3) retries it, then the workflow surfaces a clean failure
@@ -145,8 +137,6 @@ async def test_activity_failure_retries_then_fails_workflow(env):
 
     commit = _commit()
     task_queue = f"tq-{commit}"
-    # Same activity set, but generate_workorders replaced by the failing stub
-    # (Temporal dispatches activities by name).
     overridden = [
         a for a in ALL_ACTIVITIES if a is not acts.generate_workorders
     ] + [flaky_generate_workorders]
@@ -166,7 +156,6 @@ async def test_activity_failure_retries_then_fails_workflow(env):
         with pytest.raises(WorkflowFailureError) as excinfo:
             await handle.result()
 
-    # Retried exactly per policy, then failed cleanly.
     assert attempts == 3
     cause = excinfo.value.cause
     assert isinstance(cause, ActivityError)

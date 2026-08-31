@@ -4,7 +4,7 @@ defmodule TournamentUi.OptimizerRunsTest do
   alias TournamentUi.OptimizerRuns
 
   setup do
-    home = "/tmp/dt-opt-runs-#{System.unique_integer([:positive])}"
+    home = "/tmp/dt-opt-runs-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
     repo_root = File.cwd!() |> Path.join("..") |> Path.expand()
@@ -37,7 +37,7 @@ defmodule TournamentUi.OptimizerRunsTest do
           from bin import judgement, optimizer_runs
           judgement.init_db()
           optimizer_runs.init()
-          rid = optimizer_runs.start(domain='commit-msg', target='judge', rubric='card-prioritizer-v0', prompt_name='judge-instructions:commit-msg')
+          rid = optimizer_runs.start(domain='commit-msg', target='judge', rubric='pair-wheel-v2', prompt_name='judge-instructions:commit-msg')
           optimizer_runs.append_log(rid, 'starting')
           optimizer_runs.append_log(rid, 'metric: 0.8')
           optimizer_runs.finish(rid, status='done', exit_code=0, result={'candidate_version': 3, 'metric': 0.8})

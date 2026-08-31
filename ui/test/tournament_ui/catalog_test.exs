@@ -60,7 +60,9 @@ defmodule TournamentUi.CatalogTest do
 
   describe "with a python-seeded catalog" do
     setup do
-      home = "/tmp/dt-catalog-#{System.unique_integer([:positive])}"
+      home =
+        "/tmp/dt-catalog-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
       File.mkdir_p!(home)
       System.put_env("DATA_TOURNAMENTS_HOME", home)
       digests = seed!(home)
@@ -144,7 +146,9 @@ defmodule TournamentUi.CatalogTest do
 
   describe "older DB without catalog tables" do
     setup do
-      home = "/tmp/dt-catalog-old-#{System.unique_integer([:positive])}"
+      home =
+        "/tmp/dt-catalog-old-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
       File.mkdir_p!(home)
       System.put_env("DATA_TOURNAMENTS_HOME", home)
       # An empty SQLite file: valid DB, zero tables — the pre-catalog shape.
@@ -165,7 +169,7 @@ defmodule TournamentUi.CatalogTest do
   test "missing DB file yields empty results" do
     System.put_env(
       "DATA_TOURNAMENTS_HOME",
-      "/tmp/dt-catalog-absent-#{System.unique_integer([:positive])}"
+      "/tmp/dt-catalog-absent-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
     )
 
     assert Catalog.list_projects() == []

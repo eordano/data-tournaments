@@ -27,11 +27,9 @@ from bin.landscape.evidence import (
 
 API_ROOT = "https://api.github.com"
 
-
 class GitHubPayloadError(ValueError):
     """A payload dict is not the GitHub REST v3 shape we expect. Raised
     loudly — silently skipping malformed evidence would hide data loss."""
-
 
 def _require(payload: dict, key: str, kind: str):
     """Fetch a required field or raise a clear GitHubPayloadError."""
@@ -41,12 +39,10 @@ def _require(payload: dict, key: str, kind: str):
         raise GitHubPayloadError(f"{kind} payload missing required field {key!r}")
     return payload[key]
 
-
 def _browsable(url: str, label: str, kind: str) -> Optional[BrowsableLink]:
     if isinstance(url, str) and url.startswith("https://"):
         return BrowsableLink(label=label, url=url, kind=kind)
     return None
-
 
 def _ref(
     *,
@@ -72,7 +68,6 @@ def _ref(
         why_selected=why,
     )
 
-
 def issue_ref(
     repo: str, payload: dict, *, why: str, max_chars: int = MAX_EXCERPT_CHARS
 ) -> EvidenceRef:
@@ -94,7 +89,6 @@ def issue_ref(
         why=why,
         max_chars=max_chars,
     )
-
 
 def pr_ref(
     repo: str, payload: dict, *, why: str, max_chars: int = MAX_EXCERPT_CHARS
@@ -123,7 +117,6 @@ def pr_ref(
         max_chars=max_chars,
     )
 
-
 def release_ref(
     repo: str, payload: dict, *, why: str, max_chars: int = MAX_EXCERPT_CHARS
 ) -> EvidenceRef:
@@ -148,13 +141,11 @@ def release_ref(
         max_chars=max_chars,
     )
 
-
 _PARSERS = {
     "issues": issue_ref,
     "pulls": pr_ref,
     "releases": release_ref,
 }
-
 
 def parse(
     repo: str,
@@ -174,7 +165,6 @@ def parse(
             + ", ".join(sorted(_PARSERS))
         ) from None
     return [parser(repo, p, why=why, max_chars=max_chars) for p in payloads]
-
 
 def collect(
     config: dict, *, why: str, limits: Optional[dict] = None
@@ -200,7 +190,6 @@ def collect(
             )
     return refs
 
-
 def fetch(config: dict, *, timeout: float = 20.0) -> dict:
     """LIVE fetch of issues / pulls / releases for ``config['repo']`` from
     api.github.com. Network code — exercised only by RUN_LIVE_TESTS-gated
@@ -216,7 +205,7 @@ def fetch(config: dict, *, timeout: float = 20.0) -> dict:
         if kind not in _PARSERS:
             raise GitHubPayloadError(f"unknown fetch kind {kind!r}")
         url = f"{API_ROOT}/repos/{repo}/{kind}?per_page={per_page}&state=all"
-        if kind == "releases":  # releases endpoint has no state param
+        if kind == "releases":
             url = f"{API_ROOT}/repos/{repo}/releases?per_page={per_page}"
         req = urllib.request.Request(
             url,

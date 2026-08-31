@@ -1,0 +1,30 @@
+{
+  "kind": "bugsweep",
+  "corpus": [
+    {
+      "adapter": "sentry_csv",
+      "config": { "path": "/tmp/data-tournaments/uploads/sentry-7d.csv" }
+    },
+    {
+      "adapter": "slack_csv",
+      "config": { "path": "/tmp/data-tournaments/uploads/slack-bugs.csv" }
+    }
+  ],
+  "intake": { "max_candidates": 30, "rationale_required": true },
+  "panel": {
+    "lenses": [
+      { "name": "root-cause", "prompt_ref": "lens:root-cause", "burden": "refute" },
+      { "name": "lifecycle-regression", "prompt_ref": "lens:lifecycle-regression", "burden": "refute" }
+    ],
+    "human": { "rubric": "bugsweep-workorder", "judgement_kind": "single", "required": true },
+    "quorum": "all_lenses_and_human"
+  },
+  "rounds": {
+    "max": 3,
+    "batching": "required",
+    "convergence": "no_new_confirmed_findings",
+    "repair_max_cycles_per_finding": 1
+  },
+  "validation": { "mode": "red_green" },
+  "publish": { "gate": "human", "granularity": "branch-per-finding" }
+}

@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-# Build the branch-fix-loop fixture repo: one real bug, two independent fix
-# branches from the SAME base. Never merged. Deterministic content.
-#
-# Usage: build-fixture-repo.sh <target-dir>
-#
-# Layout produced:
-#   main               retry.py with the bug (attempt-1 deadline reused)
-#   fix/retry-deadline-reset      Branch A — correct fix (fresh per-attempt
-#                                 deadline + logging)  -> RED 2/2 GREEN 3/3 GUARD 2/2
-#   fix/retry-token-clone         Branch B — plausible but incomplete fix
-#                                 (resets token, keeps carried budget)
-#                                 -> RED 2/2 GREEN 3/3 GUARD 1/2 (guard fails)
-#
-# The test conventions match bin/branch_validator.py:
-#   red.sh   prints "RED <observed>/<intended>"
-#   green.sh prints "GREEN <passed>/<total>"
-#   guard.sh prints "GUARD <passed>/<total>"
 set -euo pipefail
 
 TARGET="${1:?usage: build-fixture-repo.sh <target-dir>}"
@@ -26,7 +9,6 @@ rm -rf "$TARGET"
 mkdir -p "$TARGET"
 git -C "$TARGET" init -q -b main
 
-# ── main: the bug ────────────────────────────────────────────────────────
 cat > "$TARGET/retry.py" <<'PY'
 """Release retry with a bug: attempt 1's deadline is carried into attempt 2."""
 import time
@@ -198,7 +180,6 @@ G add -A
 G commit -qm "retry runner with carried-deadline bug + RED/GREEN/GUARD suites"
 BASE_SHA=$(G rev-parse HEAD)
 
-# ── Branch A: correct fix ────────────────────────────────────────────────
 G checkout -qb fix/retry-deadline-reset
 cat > "$TARGET/retry.py" <<'PY'
 """Release retry — FIXED: fresh per-attempt deadline from config + logging."""
@@ -232,7 +213,6 @@ G add retry.py
 G commit -qm "fix: fresh per-attempt deadline from config; log every start/abort"
 A_SHA=$(G rev-parse HEAD)
 
-# ── Branch B: plausible but incomplete fix (from the SAME base) ─────────
 G checkout -q main
 G checkout -qb fix/retry-token-clone
 cat > "$TARGET/retry.py" <<'PY'

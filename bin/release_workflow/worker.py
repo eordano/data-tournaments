@@ -27,17 +27,13 @@ if str(_REPO_ROOT) not in sys.path:
 from bin.release_workflow import activities  # noqa: E402
 from bin.release_workflow.workflow import UnityReleaseWorkflow  # noqa: E402
 
-# Task queue is env-overridable so parallel deployments (or tests sharing a
-# dev server with older workers) don't steal each other's activity tasks.
 TASK_QUEUE = os.environ.get("RELEASE_TASK_QUEUE", "unity-release")
 DEFAULT_TARGET = "localhost:7233"
 
 ALL_ACTIVITIES = [
-    # projection writers (ADR 0001 §2: only Activities touch workflow_run)
     activities.record_started,
     activities.record_stage,
     activities.set_run_status,
-    # pipeline
     activities.assemble_context,
     activities.generate_workorders,
     activities.judging_gate,
@@ -48,7 +44,6 @@ ALL_ACTIVITIES = [
     activities.promote,
     activities.rollback,
 ]
-
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
@@ -62,7 +57,6 @@ async def main() -> None:
     )
     print(f"worker started on task queue {TASK_QUEUE!r} (server {target})")
     await worker.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

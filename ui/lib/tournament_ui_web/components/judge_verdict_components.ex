@@ -8,7 +8,7 @@ defmodule TournamentUiWeb.JudgeVerdictComponents do
   * `verdict_axis/1` — vertical 4-position axis (n/ne/se/s, top = best)
     for SingleJudgements.
   * `operational_verdicts/1` — verdicts in `verdict_enum` but off the
-    wheel (skip, incoherent, needs-evidence, …) as small buttons.
+    wheel (skip, needs-evidence, …) as small buttons.
   * `subject_stepper/1` — idea → execution progress header.
 
   Every button keeps the existing `phx-click="set_verdict"
@@ -18,16 +18,50 @@ defmodule TournamentUiWeb.JudgeVerdictComponents do
   calls for: it maps any legacy `output_definition` to the v2 shape
   (kind "pair", subjects ["execution"], no wheel) and treats every new
   key as optional/defensive — never trusts sibling-owned template data.
+
+  ## The glyph vocabulary is the current eight verdicts
+
+  Glyphs are POSITION-driven (geometry carries meaning per the contract);
+  labels are VERDICT-driven so a template can never be misrepresented.
+  The horizontal axis names the side the verdict is about, the vertical
+  axis says what happens to it:
+
+      w  ◀◀  A clearly      nw ◀  A marginally      n  ≡  tie
+      e  ▶▶  B clearly      ne ▶  B marginally      sw ✕A / se ✕B  eject
+
+  plus `skip` (↻), off the wheel. That is eight verdicts and no more.
+  `s` (due south) has no glyph of its own because the rubric asserts the
+  position stays empty — there is no "both are bad" verdict, and one
+  malformed card must not destroy the good card beside it. A template
+  that puts something there still renders (the component stays total),
+  but it renders as an unnamed `•` rather than borrowing a meaning.
+
+  The retired `*-lean-both-invalid` vocabulary drew the southern
+  diagonals as `◀▽` / `▶▽` — "A wins, weakly". Under the current
+  vocabulary sw/se EJECT that side, the opposite reading, so the arrow is
+  gone: `✕A` says which item leaves.
+
+  ## The discard verdicts are destructive and dressed as such
+
+  `eject_consequence/2` is the one-line consequence a judge is owed
+  before ejecting — it names what happens to the OTHER side, which is the
+  half people get wrong. `ejects?/2` drives the error palette and
+  `data-destructive` on those cells so a permanent verdict never weighs
+  the same as a reversible one.
+
+  The dressing is keyed on the VERDICT alone — the discard vocabulary the
+  swiss engine actually ejects on (`DISCARD_VERDICTS` in bin/swiss.py) —
+  never on wheel geometry: the SingleJudgement axis reuses position "se"
+  for verdicts that merely score, and a position-keyed rule dressed that
+  rung as "Ejects B permanently" on a payload with no B in it. The axis's
+  bottom rung (`invalid` / `reject-invalid`) stays undressed for the same
+  reason: the engine records those as score rows and ejects nothing.
   """
   use Phoenix.Component
 
   @wheel_positions ~w(nw n ne w e sw s se)
   @axis_positions ~w(n ne se s)
 
-  # Numpad geometry (also accepted from the top digit row):
-  #   7 8 9      nw n ne
-  #   4   6  →   w     e
-  #   1 2 3      sw s se
   @numpad_to_position %{
     "7" => "nw",
     "8" => "n",
@@ -39,7 +73,6 @@ defmodule TournamentUiWeb.JudgeVerdictComponents do
     "3" => "se"
   }
 
-  # Row-major cells of the 3×3 grid (center handled separately).
   @wheel_cells [
     {"nw", "col-start-1 row-start-1"},
     {"n", "col-start-2 row-start-1"},
@@ -51,11 +84,69 @@ defmodule TournamentUiWeb.JudgeVerdictComponents do
     {"se", "col-start-3 row-start-3"}
   ]
 
-  @doc "Wheel position for a digit key ('7' → 'nw'), nil for non-wheel keys."
+  @doc """
+  Wheel position for a digit key ('7' → 'nw'), nil for non-wheel keys.
+
+  Numpad geometry, also accepted from the top digit row:
+
+      7 8 9      nw n  ne
+      4   6  →   w     e
+      1 2 3      sw s  se
+  """
   def numpad_position(key), do: Map.get(@numpad_to_position, key)
 
   @doc "The 4 positions a SingleJudgement axis uses, top to bottom."
   def axis_positions, do: @axis_positions
+
+  @doc """
+  The digit keys that actually do something on this rubric, ascending.
+
+  Derived from the wheel the template declares, never hardcoded: the
+  shipped pair rubric leaves due south empty, so "1-9 compass" was a hint
+  advertising two keys (2 and 5) that do nothing — and 2 sits physically
+  between the two permanent verdicts.
+  """
+  def numpad_keys(%{wheel: nil}), do: ""
+
+  def numpad_keys(%{wheel: wheel, kind: kind}) do
+    live = if kind == "single", do: @axis_positions, else: @wheel_positions
+
+    @numpad_to_position
+    |> Enum.filter(fn {_key, pos} -> pos in live and Map.has_key?(wheel, pos) end)
+    |> Enum.map(fn {key, _pos} -> key end)
+    |> Enum.sort()
+    |> Enum.join(" ")
+  end
+
+  @doc """
+  The one-line consequence of a destructive verdict, or nil.
+
+  It names what happens to the OTHER side, because that is the half a
+  judge gets wrong: a discard ejects the item it names and leaves the
+  other in the pool UNCREDITED — no win, no played match, drawn again
+  next round. `docs/design/priority-tournament.md`, "Discard is a verdict,
+  not a loss, and it is PER SIDE".
+
+  Keyed on the verdict alone, so a flat rubric with no wheel still gets
+  the warning and a rubric that reuses an eject position for a scoring
+  verdict never inherits it.
+  """
+  def eject_consequence(verdict) do
+    case ejected_pair(verdict) do
+      nil ->
+        nil
+
+      {gone, kept} ->
+        "Ejects #{gone} permanently; #{kept} is not credited and is paired again."
+    end
+  end
+
+  @doc "True when this verdict ends an item's run in the pool for good."
+  def ejects?(verdict), do: ejected_pair(verdict) != nil
+
+  defp ejected_pair("discard-a"), do: {"A", "B"}
+  defp ejected_pair("discard-b"), do: {"B", "A"}
+  defp ejected_pair(_verdict), do: nil
 
   @doc """
   Normalize an `output_definition` map into the v2 rubric shape:
@@ -152,12 +243,15 @@ defmodule TournamentUiWeb.JudgeVerdictComponents do
               aria-checked={to_string(@chosen == v)}
               phx-click="set_verdict"
               phx-value-v={v}
-              title={v}
+              title={eject_consequence(v) || v}
+              data-destructive={to_string(ejects?(v))}
               class={[
                 "btn h-auto min-h-[44px] min-w-[44px] py-2 px-2 flex-col gap-1 normal-case leading-tight",
                 grid_class,
-                @chosen == v && "btn-primary ring-2 ring-primary ring-offset-1",
-                @chosen != v && "btn-ghost border app-hairline"
+                @chosen == v && ejects?(v) && "btn-error ring-2 ring-error ring-offset-1",
+                @chosen == v && !ejects?(v) && "btn-primary ring-2 ring-primary ring-offset-1",
+                @chosen != v && ejects?(v) && "btn-ghost border border-error/50 text-error",
+                @chosen != v && !ejects?(v) && "btn-ghost border app-hairline"
               ]}
             >
               <span class="text-sm leading-none font-mono" aria-hidden="true">
@@ -172,6 +266,10 @@ defmodule TournamentUiWeb.JudgeVerdictComponents do
         class="col-start-2 row-start-2 min-h-[44px] rounded-lg border app-hairline bg-base-200/40 flex flex-col items-center justify-center gap-1 px-2 py-2 text-center"
       >
         <div class="text-[11px] font-semibold tracking-widest opacity-70">A vs B</div>
+        <div class="text-[10px] leading-tight opacity-60" id="wheel-legend">
+          ◀ A · ▶ B · ≡ tie<br />
+          <span class="text-error">✕ ejects that side for good</span>
+        </div>
         <.subject_badge subject={@subject} />
         <div class="text-xs font-medium max-w-full truncate" id="wheel-selected-label">
           {if @chosen, do: verdict_short_label(@chosen), else: "—"}
@@ -305,21 +403,14 @@ defmodule TournamentUiWeb.JudgeVerdictComponents do
     """
   end
 
-  # ── Glyphs & labels ────────────────────────────────────────────────────
-  #
-  # Glyphs are POSITION-driven (geometry carries meaning per the contract);
-  # labels are VERDICT-driven so a template can never be misrepresented.
-  # Solid arrows = strong/clear signals, single arrows = slight preference,
-  # a hollow ▽ marks the "pair is weak" southern diagonals.
-
   defp wheel_glyph("nw"), do: "◀"
-  defp wheel_glyph("n"), do: "▲"
+  defp wheel_glyph("n"), do: "≡"
   defp wheel_glyph("ne"), do: "▶"
   defp wheel_glyph("w"), do: "◀◀"
   defp wheel_glyph("e"), do: "▶▶"
-  defp wheel_glyph("sw"), do: "◀▽"
-  defp wheel_glyph("s"), do: "▼"
-  defp wheel_glyph("se"), do: "▶▽"
+  defp wheel_glyph("sw"), do: "✕A"
+  defp wheel_glyph("se"), do: "✕B"
+  defp wheel_glyph(_), do: "•"
 
   defp axis_glyph("n"), do: "▲▲"
   defp axis_glyph("ne"), do: "▲"
@@ -328,7 +419,6 @@ defmodule TournamentUiWeb.JudgeVerdictComponents do
   defp axis_glyph(_), do: "•"
 
   defp operational_glyph("skip"), do: "↻"
-  defp operational_glyph("incoherent"), do: "✗"
   defp operational_glyph(_), do: "•"
 
   @doc "Human-ish short label straight from the verdict name — data-driven."

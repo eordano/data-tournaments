@@ -48,9 +48,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from bin.campaigns import _connect, _db_path, _row_to_dict  # shared conventions
-
-# ── Taxonomy (§4.3) ───────────────────────────────────────────────────────
+from bin.campaigns import _connect, _db_path, _row_to_dict
 
 STATUSES = ("draft", "evaluated", "approved", "versioned", "rejected")
 TERMINAL_STATUSES = ("versioned", "rejected")
@@ -67,16 +65,11 @@ _JSON_FIELDS = (
     "application_targets",
 )
 
-
 def init() -> None:
     """Apply the shared schema file. Idempotent (all DDL is IF NOT EXISTS)."""
     from bin import catalog
 
     catalog.init()
-
-
-# ── Proposal CRUD (mutable while draft/evaluated) ─────────────────────────
-
 
 def create_proposal(
     *,
@@ -140,7 +133,6 @@ def create_proposal(
         conn.commit()
         return cur.lastrowid
 
-
 def get_proposal(proposal_id: int) -> dict:
     with _connect() as conn:
         row = conn.execute(
@@ -149,7 +141,6 @@ def get_proposal(proposal_id: int) -> dict:
         if row is None:
             raise LookupError(f"no review_rule_proposal with id {proposal_id}")
         return _row_to_dict(row, _JSON_FIELDS)
-
 
 def list_proposals(
     *, status: Optional[str] = None, category: Optional[str] = None
@@ -168,7 +159,6 @@ def list_proposals(
     with _connect() as conn:
         rows = conn.execute(q, args).fetchall()
         return [_row_to_dict(r, _JSON_FIELDS) for r in rows]
-
 
 def record_evaluation(proposal_id: int, *, evaluated_by: str, result: str) -> None:
     """draft -> evaluated. Evaluation is EVIDENCE, not approval: it attaches
@@ -194,7 +184,6 @@ def record_evaluation(proposal_id: int, *, evaluated_by: str, result: str) -> No
         )
         conn.commit()
 
-
 def reject(proposal_id: int, *, reason: str) -> None:
     """Sticky terminal rejection. Rejecting an already-terminal proposal is
     a silent no-op (workflow_runs / finding precedent)."""
@@ -207,17 +196,13 @@ def reject(proposal_id: int, *, reason: str) -> None:
         if row is None:
             raise LookupError(f"no review_rule_proposal with id {proposal_id}")
         if row["status"] in TERMINAL_STATUSES:
-            return  # sticky terminal state
+            return
         conn.execute(
             "UPDATE review_rule_proposal SET status='rejected', "
             "evaluation_result=?, updated_at=datetime('now') WHERE id=?",
             (reason, proposal_id),
         )
         conn.commit()
-
-
-# ── Promotion (the ONLY writer of review_rule) ────────────────────────────
-
 
 def promote(
     proposal_id: int,
@@ -252,7 +237,6 @@ def promote(
             f"and it must exist before approval), got {prop['status']!r}"
         )
 
-    # AUTHORIZATION first — fail closed before any write.
     policy_id = approvals.authorize(principal, f"rule:{name}")
 
     with _connect() as conn:
@@ -263,8 +247,6 @@ def promote(
             version = (row["v"] or 0) + 1
         version = int(version)
 
-    # AUDIT before the rule row (approvals precedent: intent is recorded
-    # even if the freeze then fails — operators reconcile from audit).
     workflow_id = f"rule:{name}:v{version}"
     event_id = approvals.record_event(
         workflow_id=workflow_id,
@@ -312,10 +294,6 @@ def promote(
         "policy_id": policy_id,
     }
 
-
-# ── Rule reads ────────────────────────────────────────────────────────────
-
-
 def get_rule(name: str, version: int) -> dict:
     with _connect() as conn:
         row = conn.execute(
@@ -324,7 +302,6 @@ def get_rule(name: str, version: int) -> dict:
         if row is None:
             raise LookupError(f"no review_rule {name!r} v{version}")
         return _row_to_dict(row, ("evidence", "attribution", "dissent"))
-
 
 def active_rules() -> list[dict]:
     """Latest version per name (old versions remain; rollback = repoint)."""
@@ -337,7 +314,6 @@ def active_rules() -> list[dict]:
         ).fetchall()
         return [_row_to_dict(r, ("evidence", "attribution", "dissent")) for r in rows]
 
-
 def rule_history(name: str) -> list[dict]:
     """All versions of a rule, oldest first (the supersedes chain)."""
     with _connect() as conn:
@@ -348,13 +324,8 @@ def rule_history(name: str) -> list[dict]:
             raise LookupError(f"no review_rule named {name!r}")
         return [_row_to_dict(r, ("evidence", "attribution", "dissent")) for r in rows]
 
-
-# ── CLI (debug aid; the real entry points are the importable functions) ──
-
-
 def _print(obj: Any) -> None:
     print(json.dumps(obj, indent=2, default=str))
-
 
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(
@@ -405,7 +376,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif cmd == "history":
         _print(rule_history(args.name))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

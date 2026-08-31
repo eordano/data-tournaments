@@ -2,7 +2,7 @@
 
 Date: 2026-08-16
 
-Target: `/Users/user/Projects/unity-editor` (read-only; its existing worktree was not modified)
+Target: `~/Projects/unity-editor` (read-only; its existing worktree was not modified)
 
 ## Run shape
 

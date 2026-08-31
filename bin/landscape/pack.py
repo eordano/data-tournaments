@@ -27,22 +27,19 @@ from bin.landscape.canonical import content_digest
 from bin.landscape.evidence import EvidenceRef, TrustTier
 from bin.landscape.snapshot import LandscapeSnapshot
 
-
 class Role(str, Enum):
     CREATOR = "creator"
     JUDGE = "judge"
     EXECUTOR = "executor"
-
 
 class ContextPack(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(frozen=True)
 
     project: str
     role: Role
-    snapshot_digest: str  # the snapshot this pack was projected from
+    snapshot_digest: str
     created_at: str = ""
     evidence: tuple[EvidenceRef, ...] = ()
-    # Tier-3 refs the consumer must present as untrusted (JUDGE packs).
     flagged_evidence_ids: tuple[str, ...] = ()
 
     @pydantic.computed_field  # type: ignore[prop-decorator]
@@ -65,7 +62,6 @@ class ContextPack(pydantic.BaseModel):
     @property
     def digest(self) -> str:
         return content_digest(self._content_payload())
-
 
 def build_pack(
     snapshot: LandscapeSnapshot, role: Role, *, created_at: str = ""
@@ -90,7 +86,7 @@ def build_pack(
             for ref in snapshot.evidence
             if ref.trust_tier is TrustTier.TIER3_EXTERNAL
         )
-    else:  # CREATOR: everything, tiers visible via tier_labels / trust_tier
+    else:
         evidence = snapshot.evidence
         flagged = ()
     return ContextPack(

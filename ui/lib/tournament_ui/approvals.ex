@@ -104,7 +104,7 @@ defmodule TournamentUi.Approvals do
 
   # Approvers must be a list of non-empty strings — anything else denies.
   # A bare string is rejected on BOTH sides now: in Python `principal in
-  # "esteban"` is substring matching and would grant 'est'
+  # "changeme"` is substring matching and would grant 'chan'
   # (mirrors bin/approvals.py _valid_approvers).
   defp validated_approvers(approvers) when is_list(approvers) do
     if Enum.all?(approvers, &(is_binary(&1) and String.trim(&1) != "")),

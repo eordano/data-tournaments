@@ -64,7 +64,9 @@ defmodule TournamentUi.ApprovalsTest do
   end
 
   setup do
-    home = "/tmp/dt-approvals-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-approvals-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 
@@ -79,7 +81,7 @@ defmodule TournamentUi.ApprovalsTest do
   describe "authorize/2 fail-closed deny paths" do
     test "denies blank / nil principal", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": "*"}))
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": "*"}))
 
       assert {:error, reason} = Approvals.authorize(nil, @wf)
       assert reason =~ "no authenticated principal"
@@ -90,7 +92,7 @@ defmodule TournamentUi.ApprovalsTest do
     test "denies when no active approval policy exists", %{home: home} do
       init!(home)
 
-      assert {:error, reason} = Approvals.authorize("esteban", @wf)
+      assert {:error, reason} = Approvals.authorize("changeme", @wf)
       assert reason =~ "no active approval policy"
       assert reason =~ "fail closed"
     end
@@ -98,13 +100,13 @@ defmodule TournamentUi.ApprovalsTest do
     test "denies when the policy table is missing entirely (older DB)", %{home: home} do
       File.write!(Path.join(home, "judgements.db"), "")
 
-      assert {:error, reason} = Approvals.authorize("esteban", @wf)
+      assert {:error, reason} = Approvals.authorize("changeme", @wf)
       assert reason =~ "no active approval policy"
     end
 
     test "archived policies do not grant", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": "*"}), "archived-pol")
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": "*"}), "archived-pol")
 
       py!(home, """
       db = sqlite3.connect(os.environ['DATA_TOURNAMENTS_HOME'] + '/judgements.db')
@@ -112,7 +114,7 @@ defmodule TournamentUi.ApprovalsTest do
       db.commit()
       """)
 
-      assert {:error, reason} = Approvals.authorize("esteban", @wf)
+      assert {:error, reason} = Approvals.authorize("changeme", @wf)
       assert reason =~ "no active approval policy"
     end
 
@@ -120,7 +122,7 @@ defmodule TournamentUi.ApprovalsTest do
       init!(home)
       create_policy!(home, "this is not json")
 
-      assert {:error, reason} = Approvals.authorize("esteban", @wf)
+      assert {:error, reason} = Approvals.authorize("changeme", @wf)
       assert reason =~ "not an allowlisted approver"
     end
 
@@ -128,15 +130,15 @@ defmodule TournamentUi.ApprovalsTest do
       init!(home)
       create_policy!(home, ~s("just a string"))
 
-      assert {:error, reason} = Approvals.authorize("esteban", @wf)
+      assert {:error, reason} = Approvals.authorize("changeme", @wf)
       assert reason =~ "not an allowlisted approver"
     end
 
     test "scope glob mismatch denies", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": "deploy:*"}))
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": "deploy:*"}))
 
-      assert {:error, reason} = Approvals.authorize("esteban", @wf)
+      assert {:error, reason} = Approvals.authorize("changeme", @wf)
       assert reason =~ "not an allowlisted approver"
     end
 
@@ -144,8 +146,8 @@ defmodule TournamentUi.ApprovalsTest do
       init!(home)
       create_policy!(home, ~s({"approvers": ["someone-else"], "scope": "release:*"}))
 
-      assert {:error, reason} = Approvals.authorize("esteban", @wf)
-      assert reason =~ "esteban"
+      assert {:error, reason} = Approvals.authorize("changeme", @wf)
+      assert reason =~ "changeme"
       assert reason =~ "not an allowlisted approver"
     end
   end
@@ -154,17 +156,17 @@ defmodule TournamentUi.ApprovalsTest do
     test "returns the matching policy id", %{home: home} do
       init!(home)
       create_policy!(home, ~s({"approvers": ["nope"], "scope": "*"}))
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": "release:*"}))
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": "release:*"}))
 
-      assert {:ok, policy_id} = Approvals.authorize("esteban", @wf)
+      assert {:ok, policy_id} = Approvals.authorize("changeme", @wf)
       assert is_integer(policy_id)
     end
 
     test "missing scope defaults to * and ? matches one char", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"]}))
+      create_policy!(home, ~s({"approvers": ["changeme"]}))
 
-      assert {:ok, _} = Approvals.authorize("esteban", @wf)
+      assert {:ok, _} = Approvals.authorize("changeme", @wf)
       assert Approvals.glob_match?("release:?:x", "release:a:x")
       refute Approvals.glob_match?("release:?:x", "release:ab:x")
       refute Approvals.glob_match?("release:*", "deploy:release:x")
@@ -174,31 +176,31 @@ defmodule TournamentUi.ApprovalsTest do
   describe "submit_decision/4" do
     test "authorize -> audit -> deliver; audit row exists BEFORE delivery", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": "release:*"}))
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": "release:*"}))
       install_stub!(home, 0)
 
       assert {:ok, %{event_id: event_id, decision: "approved", delivery: :ok}} =
-               Approvals.submit_decision(@wf, true, "esteban", "looks good")
+               Approvals.submit_decision(@wf, true, "changeme", "looks good")
 
       # Delivery argv reached the client CLI unchanged.
       assert File.read!(Path.join(home, "argv.log")) =~
-               "approve #{@wf} --approver esteban --reason looks good"
+               "approve #{@wf} --approver changeme --reason looks good"
 
       # Ordering proof: at the moment the stub ran, the audit row was
       # already committed.
       assert String.trim(File.read!(Path.join(home, "rows_at_delivery.log"))) == "1"
 
-      assert [%{id: ^event_id, decision: "approved", approver: "esteban", reason: "looks good"}] =
+      assert [%{id: ^event_id, decision: "approved", approver: "changeme", reason: "looks good"}] =
                Approvals.list_events(@wf)
     end
 
     test "reject path records a rejected event", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": "release:*"}))
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": "release:*"}))
       install_stub!(home, 0)
 
       assert {:ok, %{decision: "rejected", delivery: :ok}} =
-               Approvals.submit_decision(@wf, false, "esteban", "canary regressed")
+               Approvals.submit_decision(@wf, false, "changeme", "canary regressed")
 
       assert File.read!(Path.join(home, "argv.log")) =~ "reject #{@wf}"
       assert [%{decision: "rejected"}] = Approvals.list_events(@wf)
@@ -206,11 +208,11 @@ defmodule TournamentUi.ApprovalsTest do
 
     test "failed delivery keeps the audit row and reports the output", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": "release:*"}))
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": "release:*"}))
       install_stub!(home, 1)
 
       assert {:ok, %{event_id: event_id, delivery: {:failed, output}}} =
-               Approvals.submit_decision(@wf, true, "esteban", "")
+               Approvals.submit_decision(@wf, true, "changeme", "")
 
       assert output =~ "signal delivery exploded"
       # The recorded intent stands — by design, for operator reconciliation.
@@ -222,7 +224,7 @@ defmodule TournamentUi.ApprovalsTest do
       create_policy!(home, ~s({"approvers": ["someone-else"], "scope": "*"}))
       install_stub!(home, 0)
 
-      assert {:error, _} = Approvals.submit_decision(@wf, true, "esteban", "")
+      assert {:error, _} = Approvals.submit_decision(@wf, true, "changeme", "")
       assert Approvals.list_events(@wf) == []
       refute File.exists?(Path.join(home, "argv.log"))
     end
@@ -234,50 +236,50 @@ defmodule TournamentUi.ApprovalsTest do
 
     test "string approvers never substring-grant", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": "esteban", "scope": "release:*"}))
-      # Substring membership would grant "est" (and "esteban"); the shape
+      create_policy!(home, ~s({"approvers": "changeme", "scope": "release:*"}))
+      # Substring membership would grant "chan" (and "changeme"); the shape
       # is malformed, so BOTH must be denied.
-      assert {:error, _} = Approvals.authorize("est", @wf)
-      assert {:error, _} = Approvals.authorize("esteban", @wf)
+      assert {:error, _} = Approvals.authorize("chan", @wf)
+      assert {:error, _} = Approvals.authorize("changeme", @wf)
     end
 
     test "non-string approver entries deny", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban", 42], "scope": "*"}))
-      assert {:error, _} = Approvals.authorize("esteban", @wf)
+      create_policy!(home, ~s({"approvers": ["changeme", 42], "scope": "*"}))
+      assert {:error, _} = Approvals.authorize("changeme", @wf)
     end
 
     test "empty-string approver entries deny", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban", " "], "scope": "*"}))
-      assert {:error, _} = Approvals.authorize("esteban", @wf)
+      create_policy!(home, ~s({"approvers": ["changeme", " "], "scope": "*"}))
+      assert {:error, _} = Approvals.authorize("changeme", @wf)
     end
 
     test "non-string scope denies instead of widening to *", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": 42}))
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": null}))
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": {"glob": "*"}}))
-      assert {:error, _} = Approvals.authorize("esteban", @wf)
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": 42}))
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": null}))
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": {"glob": "*"}}))
+      assert {:error, _} = Approvals.authorize("changeme", @wf)
     end
 
     test "character-class scope syntax is rejected", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": "release:[au]*"}))
-      assert {:error, _} = Approvals.authorize("esteban", "release:unity:abc")
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": "release:[au]*"}))
+      assert {:error, _} = Approvals.authorize("changeme", "release:unity:abc")
     end
 
     test "missing scope still defaults to *", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"]}))
-      assert {:ok, _} = Approvals.authorize("esteban", @wf)
+      create_policy!(home, ~s({"approvers": ["changeme"]}))
+      assert {:ok, _} = Approvals.authorize("changeme", @wf)
     end
 
     test "? glob matches exactly one character", %{home: home} do
       init!(home)
-      create_policy!(home, ~s({"approvers": ["esteban"], "scope": "release:unit?:*"}))
-      assert {:ok, _} = Approvals.authorize("esteban", "release:unity:abc")
-      assert {:error, _} = Approvals.authorize("esteban", "release:unitty:abc")
+      create_policy!(home, ~s({"approvers": ["changeme"], "scope": "release:unit?:*"}))
+      assert {:ok, _} = Approvals.authorize("changeme", "release:unity:abc")
+      assert {:error, _} = Approvals.authorize("changeme", "release:unitty:abc")
     end
   end
 end

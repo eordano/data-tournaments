@@ -58,7 +58,9 @@ defmodule TournamentUiWeb.CatalogLiveTest do
 
   describe "with a seeded catalog" do
     setup do
-      home = "/tmp/dt-catalog-live-#{System.unique_integer([:positive])}"
+      home =
+        "/tmp/dt-catalog-live-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
       File.mkdir_p!(home)
       System.put_env("DATA_TOURNAMENTS_HOME", home)
       digests = seed!(home)
@@ -113,7 +115,7 @@ defmodule TournamentUiWeb.CatalogLiveTest do
   test "empty state renders when no catalog exists", %{conn: conn} do
     System.put_env(
       "DATA_TOURNAMENTS_HOME",
-      "/tmp/dt-catalog-live-empty-#{System.unique_integer([:positive])}"
+      "/tmp/dt-catalog-live-empty-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
     )
 
     {:ok, _view, html} = live(conn, "/environment?tab=sources")

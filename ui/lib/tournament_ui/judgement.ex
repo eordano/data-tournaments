@@ -16,14 +16,23 @@ defmodule TournamentUi.Judgement do
   out once to the same init the CLI runs (`python3 bin/judgement.py
   init`); on failure the UI degrades to the empty state plus a warning
   banner instead of crashing.
+
+  ## Rubrics are read, never listed
+
+  `pair_rubrics/0` asks the fabric which rubrics are pair-shaped instead
+  of naming them. A hand-kept list is what let one page follow a rubric
+  rename while its siblings kept querying a name nothing writes any more,
+  so exports returned none of the judgements new work produced.
   """
 
   alias Exqlite.Sqlite3
 
-  @rubric_default "card-prioritizer-v0"
+  # ui/lib/tournament_ui → repo root is three levels up (dev fallback only:
+  # release builds bake DATA_TOURNAMENTS_REPO at compile time).
+  @repo_root System.get_env("DATA_TOURNAMENTS_REPO") ||
+               Path.expand("../../..", __DIR__)
 
-  # ui/lib/tournament_ui → repo root is three levels up.
-  @repo_root Path.expand("../../..", __DIR__)
+  def repo_root, do: @repo_root
 
   def db_path do
     home = System.get_env("DATA_TOURNAMENTS_HOME") || "/tmp/data-tournaments"
@@ -32,7 +41,68 @@ defmodule TournamentUi.Judgement do
 
   def db_exists?, do: File.exists?(db_path())
 
-  def default_rubric, do: @rubric_default
+  @pair_rubric_sql """
+  SELECT DISTINCT name FROM eval_template
+  WHERE COALESCE(json_extract(output_definition, '$.judgement_kind'), 'pair') = 'pair'
+  ORDER BY name
+  """
+
+  @doc """
+  Every pair-shaped rubric the fabric holds, alphabetically.
+
+  Derived from `eval_template`, using the same default
+  `bin/judgement.py`'s `normalize_output_definition/1` applies: a template
+  with no `judgement_kind` predates the field and is a pair rubric. This
+  is the ONLY rubric list in the UI — the standings scope, the results
+  page and the export all read it, so a rubric that moves cannot leave one
+  surface behind.
+  """
+  def pair_rubrics do
+    case query(@pair_rubric_sql, []) do
+      {:ok, rows} -> Enum.map(rows, fn [name] -> name end)
+      _ -> []
+    end
+  end
+
+  @default_rubric_sql """
+  SELECT dflt_value FROM pragma_table_info('domain') WHERE name = 'rubric'
+  """
+
+  @doc """
+  The pair rubric a domain created without one is bound to.
+
+  Read off `domain.rubric`'s schema DEFAULT rather than named here, for the
+  same reason `pair_rubrics/0` queries instead of listing: a hand-kept copy
+  is what let one surface keep naming a rubric after a rename while its
+  siblings moved on. Returns nil when the fabric is not initialized, so the
+  caller degrades instead of inventing a name.
+  """
+  def default_rubric do
+    case query(@default_rubric_sql, []) do
+      {:ok, [[value] | _]} when is_binary(value) -> String.trim(value, "'")
+      _ -> nil
+    end
+  end
+
+  @discarded_side %{"discard-a" => :a, "discard-b" => :b}
+
+  @doc """
+  Verdicts that eject ONE named side of a pairing, permanently.
+
+  `bin/swiss.py` `EJECTED_SIDE_BY_VERDICT` is the source; this map mirrors
+  it so a chip can be coloured without a shell-out. `discard-a` removes A
+  and leaves B in the pool with nothing recorded about it — an item is
+  ejected on its own merits and NEVER as collateral from the card it was
+  drawn against. A discard is not a score of zero (zero is a real position,
+  held by items that lost honestly) and it is not `skip` (which says the
+  rater could not judge, leaving the pairing open).
+  """
+  def discard_verdicts, do: Map.keys(@discarded_side) |> Enum.sort()
+
+  def discard_verdict?(verdict), do: Map.has_key?(@discarded_side, verdict)
+
+  @doc "`:a`, `:b`, or nil — which side of the pairing this verdict ejects."
+  def discarded_side(verdict), do: Map.get(@discarded_side, verdict)
 
   @doc """
   True when the fabric DB file exists and carries the core schema. Checks
@@ -105,8 +175,8 @@ defmodule TournamentUi.Judgement do
       %{
         id: 42,
         rater_type: "human",
-        template_name: "card-prioritizer-v0",
-        template_version: 1,
+        template_name: "<the rubric bound to this row's config>",
+        template_version: 2,
         output_definition: %{...},  # parsed JSON
         trace_payload: %{...},      # parsed JSON
         tournament_db_path: "...",
@@ -188,6 +258,143 @@ defmodule TournamentUi.Judgement do
     list_pending(limit: 1000)
     |> Enum.find(&(&1.id == id))
   end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Round-scoped queue (Swiss)
+  # ─────────────────────────────────────────────────────────────────────
+
+  @doc """
+  Swiss round a trace payload belongs to, or `nil` when the payload
+  carries no round at all.
+
+  `bin/judgement.py`'s `_trace_payload` writes an explicit integer
+  `round`; older payloads only carry the `"R<round>-<slot>"` label, which
+  is parsed as a fallback. A payload with neither (hand-seeded pairs,
+  single-artifact judgements) is roundless and is never withheld by
+  `open_round_queue/1`.
+  """
+  def payload_round(payload) when is_map(payload) do
+    case Map.get(payload, "round") do
+      n when is_integer(n) -> n
+      n when is_binary(n) -> parse_round_int(n)
+      _ -> label_round(Map.get(payload, "label"))
+    end
+  end
+
+  def payload_round(_), do: nil
+
+  defp label_round("R" <> rest) when is_binary(rest) do
+    rest |> String.split("-") |> List.first() |> parse_round_int()
+  end
+
+  defp label_round(_), do: nil
+
+  defp parse_round_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
+
+  defp parse_round_int(_), do: nil
+
+  @doc """
+  The pending rows a human may judge right now, plus per-pool round
+  progress.
+
+  Swiss rounds are sequential: a pool's round N+1 pairings are computed
+  from the standings round N produced, so serving them out of order
+  corrupts the input to the next pairing. Only the *lowest* open round of
+  each pool (`tournament_db_path`) is offered; a pool whose open round has
+  been fully resolved contributes nothing until its next round is
+  enqueued. Roundless payloads are always offered.
+
+  Returns
+
+      %{
+        rows: [pending row, ...],
+        rounds: %{pool_path => %{round: n, remaining: k, total: m}}
+      }
+
+  where `remaining` counts still-pending pairings of that pool's open
+  round and `total` counts every pairing enqueued for it, resolved or not.
+
+  Accepts the same options as `list_pending/1`.
+  """
+  def open_round_queue(opts \\ []) do
+    rows = list_pending(opts)
+
+    open =
+      Enum.reduce(rows, %{}, fn row, acc ->
+        case payload_round(row.trace_payload) do
+          nil -> acc
+          n -> Map.update(acc, row.tournament_db_path, n, &min(&1, n))
+        end
+      end)
+
+    offered =
+      Enum.filter(rows, fn row ->
+        case payload_round(row.trace_payload) do
+          nil -> true
+          n -> n == Map.get(open, row.tournament_db_path)
+        end
+      end)
+
+    %{
+      rows: offered,
+      rounds:
+        round_progress(open, Keyword.get(opts, :rater_type, "human"), Keyword.get(opts, :domain))
+    }
+  end
+
+  defp round_progress(open, _rater_type, _domain) when map_size(open) == 0, do: %{}
+
+  defp round_progress(open, rater_type, domain) do
+    {domain_where, domain_params} = domain_filter_sql(domain)
+
+    sql = """
+    SELECT p.tournament_db_path,
+           json_extract(p.trace_payload, '$.round'),
+           json_extract(p.trace_payload, '$.label'),
+           p.status
+    FROM pending_judgement p
+    JOIN job_configuration c ON c.id = p.config_id
+    LEFT JOIN domain d ON d.id = p.domain_id
+    WHERE c.rater_type = ? #{domain_where}
+    """
+
+    case query(sql, [rater_type] ++ domain_params) do
+      {:ok, rows} -> tally_rounds(rows, open)
+      {:error, _} -> %{}
+    end
+  end
+
+  defp tally_rounds(rows, open) do
+    Enum.reduce(rows, %{}, fn [path, round, label, status], acc ->
+      round = payload_round(%{"round" => round, "label" => label})
+      target = Map.get(open, path)
+
+      if round != nil and round == target do
+        Map.update(
+          acc,
+          path,
+          %{round: round, remaining: pending_unit(status), total: 1},
+          fn tally ->
+            %{
+              tally
+              | remaining: tally.remaining + pending_unit(status),
+                total: tally.total + 1
+            }
+          end
+        )
+      else
+        acc
+      end
+    end)
+  end
+
+  defp pending_unit("pending"), do: 1
+  defp pending_unit(_), do: 0
 
   @doc """
   Fetch a judgement row by id REGARDLESS of status — candidate permalinks
@@ -702,11 +909,14 @@ defmodule TournamentUi.Judgement do
   # ─────────────────────────────────────────────────────────────────────
 
   @doc """
-  Joined verdict + confidence rows, optionally filtered by rubric and rater_type.
-  Returns one map per judgement (not one per Score row).
+  Joined verdict + confidence rows, optionally filtered by rater_type and
+  domain. Returns one map per judgement (not one per Score row).
+
+  Rubric scope defaults to `pair_rubrics/0` — every pair rubric on disk, not
+  one name. `:rubric` (a single name) or `:rubrics` (a list) narrows it.
   """
   def list_judgements(opts \\ []) do
-    rubric = Keyword.get(opts, :rubric, @rubric_default)
+    rubrics = rubric_scope(opts)
     rater_type = Keyword.get(opts, :rater_type)
     domain = Keyword.get(opts, :domain)
     limit = Keyword.get(opts, :limit, 200)
@@ -721,25 +931,41 @@ defmodule TournamentUi.Judgement do
         do: {" AND d.name = ?", [domain]},
         else: {"", []}
 
+    rubric_placeholders = Enum.map_join(rubrics, ",", fn _ -> "?" end)
+
     sql = """
     SELECT s_v.rating_id, s_v.value AS verdict, s_v.metadata AS verdict_meta,
            s_c.value AS confidence, s_c.metadata AS confidence_meta,
            s_v.tournament_db_path, s_v.match_id, s_v.trace_id,
            s_v.rubric_version, t.name AS rubric, s_v.created_at,
-           p.id AS pending_id, p.trace_payload, d.id AS domain_id, d.name AS domain_name
+           p.id AS pending_id, p.trace_payload, d.id AS domain_id, d.name AS domain_name,
+           p.status AS pending_status
     FROM score s_v
     JOIN score s_c ON s_c.rating_id = s_v.rating_id AND s_c.name = 'judgement.confidence'
     JOIN eval_template t ON t.id = s_v.template_id
     LEFT JOIN pending_judgement p ON p.id = s_v.pending_id
     LEFT JOIN domain d ON d.id = p.domain_id
-    WHERE s_v.name = 'judgement.verdict' AND t.name = ? #{rater_where} #{domain_where}
+    WHERE s_v.name = 'judgement.verdict' AND t.name IN (#{rubric_placeholders})
+      #{rater_where} #{domain_where}
     ORDER BY s_v.created_at DESC
     LIMIT ?
     """
 
-    case query(sql, [rubric] ++ rater_params ++ domain_params ++ [limit]) do
-      {:ok, rows} -> rows |> Enum.map(&decode_judgement/1) |> annotate_revisions()
-      {:error, _} -> []
+    if rubrics == [] do
+      []
+    else
+      case query(sql, rubrics ++ rater_params ++ domain_params ++ [limit]) do
+        {:ok, rows} -> rows |> Enum.map(&decode_judgement/1) |> annotate_revisions()
+        {:error, _} -> []
+      end
+    end
+  end
+
+  defp rubric_scope(opts) do
+    cond do
+      is_list(opts[:rubrics]) -> opts[:rubrics]
+      is_binary(opts[:rubric]) -> [opts[:rubric]]
+      true -> pair_rubrics()
     end
   end
 
@@ -798,7 +1024,8 @@ defmodule TournamentUi.Judgement do
          pending_id,
          trace_payload,
          domain_id,
-         domain_name
+         domain_name,
+         pending_status
        ]) do
     vmeta = parse_json(verdict_meta)
     payload = parse_json(trace_payload)
@@ -817,6 +1044,7 @@ defmodule TournamentUi.Judgement do
       domain_id: domain_id,
       domain_name: domain_name,
       pending_id: pending_id,
+      pending_status: pending_status,
       match_id: match_id,
       trace_id: trace_id,
       trace_payload: payload,
@@ -825,6 +1053,48 @@ defmodule TournamentUi.Judgement do
       card_b: decode_card(payload, "card_b", "input_b", "Candidate B"),
       created_at: created_at
     }
+  end
+
+  @doc """
+  Stable identity for one judged card: the digest of the text that was
+  judged.
+
+  The SAME rule `bin/judgement.py`'s `_side_snapshot/2` applies before it
+  hashes a pair key — body, else text, else title — so a card carries one
+  identity in the queue, in the points table and here. Keyed by content and
+  never by `source_ref`: `bin/generate_cards.py` stamps every card drafted
+  from one corpus item with that item's ref, so a ref-keyed identity
+  silently collapses distinct findings into one.
+
+  A payload that carries only a file ref is snapshotted by READING that file
+  at enqueue time, which the UI does not do; those rows key on the ref
+  string here and are therefore UI-local. The points table never uses this
+  function — `bin/standings_view.py` computes its own keys from the stored
+  snapshot.
+  """
+  def item_key(card) do
+    :crypto.hash(:sha256, snapshot_text(card))
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 16)
+  end
+
+  defp snapshot_text(card) do
+    [Map.get(card, :body), Map.get(card, :text), Map.get(card, :title)]
+    |> Enum.find("", fn value -> is_binary(value) and value != "" end)
+  end
+
+  defp export_side(payload, card_key, input_key) do
+    case Map.get(payload, card_key) do
+      card when is_map(card) ->
+        %{
+          title: card["title"],
+          body: card["body"] || card["text"],
+          source_ref: card["source_ref"] || card["ref"]
+        }
+
+      _ ->
+        Map.get(payload, input_key)
+    end
   end
 
   defp decode_card(payload, card_key, input_key, fallback_title) do
@@ -919,13 +1189,21 @@ defmodule TournamentUi.Judgement do
   @doc """
   Returns a list of maps, one per judgement, ready to be encoded as
   individual JSON lines by the export controller.
+
+  Scope defaults to the SAME rubric set `list_judgements/1` reads, so an
+  export covers exactly what the results page displays. An export that
+  reports a narrower set than the page is a silent data loss, not a filter.
   """
   def export_records(opts \\ []) do
-    rubric = Keyword.get(opts, :rubric, @rubric_default)
     rater_type = Keyword.get(opts, :rater_type)
     domain = Keyword.get(opts, :domain)
 
-    list_judgements(rubric: rubric, rater_type: rater_type, domain: domain, limit: 10_000)
+    list_judgements(
+      rubrics: rubric_scope(opts),
+      rater_type: rater_type,
+      domain: domain,
+      limit: 10_000
+    )
     |> Enum.map(fn j ->
       payload =
         if map_size(j.trace_payload) > 0,
@@ -942,8 +1220,8 @@ defmodule TournamentUi.Judgement do
           domainName: j.domain_name,
           matchId: j.match_id,
           label: Map.get(payload, "label"),
-          input_a: Map.get(payload, "input_a"),
-          input_b: Map.get(payload, "input_b"),
+          input_a: export_side(payload, "card_a", "input_a"),
+          input_b: export_side(payload, "card_b", "input_b"),
           synthesis: Map.get(payload, "synthesis") || Map.get(payload, "conclusion"),
           winner_id: Map.get(payload, "winner_id"),
           winner_reasoning: Map.get(payload, "winner_reasoning"),
@@ -1039,6 +1317,15 @@ defmodule TournamentUi.Judgement do
   # ─────────────────────────────────────────────────────────────────────
   # Internals
   # ─────────────────────────────────────────────────────────────────────
+
+  @doc """
+  Run one read-only SELECT against the fabric DB.
+
+  The single connection path other modules in this app read through, so
+  there is one place that knows where the DB is and one place that degrades
+  to `{:error, :no_db}` instead of raising when it is not there yet.
+  """
+  def fabric_query(sql, params), do: query(sql, params)
 
   defp query(sql, params) do
     if not db_exists?() do

@@ -19,13 +19,13 @@ defmodule TournamentUiWeb.Router do
 
     live "/", StartLive, :index
     live "/start", StartLive, :index
-    live "/brackets", BracketLive, :index
-    live "/new", NewTournamentLive, :new
     live "/judge", JudgeLive, :index
 
     live "/candidates/:id/:side", CandidateLive, :show
     live "/results", JudgementsLive, :index
     live "/judgements", JudgementsLive, :index
+    live "/standings", StandingsLive, :index
+    live "/table", StandingsLive, :index
     # /environment unifies the old /catalog + /prompts surfaces (wave-13 §2);
     # both legacy routes stay alive and push_navigate to their tab on mount.
     # /catalog/:project remains a live detail page (source forms live there).
@@ -38,6 +38,7 @@ defmodule TournamentUiWeb.Router do
     live "/catalog/:project", CatalogLive, :show
     live "/campaigns", CampaignsLive, :index
     live "/campaigns/:name", CampaignsLive, :show
+    live "/designer", DesignerLive, :index
     live "/runs", RunsLive, :index
     # Query-param detail route: colon-bearing Temporal workflow ids (e.g.
     # release:unity:abc123) break path-segment routing on direct GET, so

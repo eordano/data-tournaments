@@ -25,5 +25,5 @@
   },
   "outcome": "promoted [DRY-RUN \u2014 no shipping credentials; nothing was deployed]",
   "written_at": "2026-08-17T11:08:00Z",
-  "manifest_digest": "REDACTED"
+  "manifest_digest": "b1660ed379c1e79e742c7197709c1e72f353e7231feaf356bc11eb1adda5c43a"
 }

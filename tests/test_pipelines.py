@@ -11,14 +11,12 @@ import sqlite3
 
 import pytest
 
-
 @pytest.fixture
 def pipelines(tmp_data_home):
     from bin import pipelines as mod
 
     mod.init()
     return mod
-
 
 @pytest.fixture
 def raw(pipelines, tmp_data_home):
@@ -29,7 +27,6 @@ def raw(pipelines, tmp_data_home):
     yield conn
     conn.close()
 
-
 def _insert_template(raw, name: str, outdef: dict | None = None) -> None:
     """Direct SQL rubric prerequisite (decoupled from bin/judgement.py)."""
     raw.execute(
@@ -39,12 +36,8 @@ def _insert_template(raw, name: str, outdef: dict | None = None) -> None:
     )
     raw.commit()
 
-
 @pytest.fixture
 def rubrics(raw):
-    # Shapes matter since stage/rubric compatibility is enforced: the pair
-    # rubric serves idea AND execution stages; the single rubric declares
-    # its kind explicitly (a bare legacy outdef normalizes to kind=pair).
     _insert_template(raw, "tiny-pair", {
         "verdict_enum": ["yes", "no"],
         "judgement_kind": "pair",
@@ -57,11 +50,9 @@ def rubrics(raw):
     })
     return {"pair": "tiny-pair", "single": "tiny-single"}
 
-
 def _judgement(key, subject, judgement, rubric, **extra):
     return {"key": key, "subject": subject, "judgement": judgement,
             "rubric": rubric, **extra}
-
 
 def _valid_definition(rubrics):
     return {
@@ -75,10 +66,6 @@ def _valid_definition(rubrics):
         ],
     }
 
-
-# ── registration / versioning / immutability ──────────────────────────────
-
-
 def test_register_valid_pipeline_v1_with_digest(pipelines, rubrics):
     out = pipelines.register_pipeline("tiny-flow", _valid_definition(rubrics))
     assert out["name"] == "tiny-flow"
@@ -89,7 +76,6 @@ def test_register_valid_pipeline_v1_with_digest(pipelines, rubrics):
     assert got["digest"] == out["digest"]
     assert got["definition"]["stages"][0]["key"] == "idea-compare"
 
-
 def test_reregister_same_name_bumps_version(pipelines, rubrics):
     defn = _valid_definition(rubrics)
     v1 = pipelines.register_pipeline("tiny-flow", defn)
@@ -98,12 +84,10 @@ def test_reregister_same_name_bumps_version(pipelines, rubrics):
     v2 = pipelines.register_pipeline("tiny-flow", defn2)
     assert (v1["version"], v2["version"]) == (1, 2)
     assert v1["digest"] != v2["digest"]
-    # latest wins without an explicit version; explicit version still works
     assert pipelines.get_pipeline("tiny-flow")["version"] == 2
     assert pipelines.get_pipeline("tiny-flow", 1)["digest"] == v1["digest"]
     names = [(p["name"], p["version"]) for p in pipelines.list_pipelines()]
     assert names == [("tiny-flow", 1), ("tiny-flow", 2)]
-
 
 def test_pipeline_rows_immutable(pipelines, rubrics, raw):
     pipelines.register_pipeline("tiny-flow", _valid_definition(rubrics))
@@ -112,30 +96,21 @@ def test_pipeline_rows_immutable(pipelines, rubrics, raw):
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         raw.execute("DELETE FROM pipeline WHERE name='tiny-flow'")
 
-
 def test_get_pipeline_missing_raises(pipelines):
     with pytest.raises(LookupError):
         pipelines.get_pipeline("no-such-pipeline")
-
-
-# ── validation refusals ────────────────────────────────────────────────────
-
 
 def test_unknown_rubric_refused(pipelines, rubrics):
     defn = {"stages": [_judgement("j", "idea", "pair", "no-such-rubric")]}
     with pytest.raises(ValueError, match="no existing"):
         pipelines.register_pipeline("bad", defn)
 
-
 def test_stage_kind_mismatching_rubric_refused(pipelines, rubrics):
-    # tiny-single declares judgement_kind=single; a pair stage may not use it.
     defn = {"stages": [_judgement("j", "execution", "pair", rubrics["single"])]}
     with pytest.raises(ValueError, match="judgement_kind"):
         pipelines.register_pipeline("bad", defn)
 
-
 def test_stage_subject_not_in_rubric_subjects_refused(pipelines, raw):
-    # A rubric declaring subjects=['execution'] may not serve an idea stage.
     _insert_template(raw, "exec-only-single", {
         "verdict_enum": ["yes", "no"],
         "judgement_kind": "single",
@@ -145,9 +120,7 @@ def test_stage_subject_not_in_rubric_subjects_refused(pipelines, raw):
     with pytest.raises(ValueError, match="not among rubric"):
         pipelines.register_pipeline("bad", defn)
 
-
 def test_legacy_bare_rubric_normalizes_to_pair_execution(pipelines, raw):
-    # A legacy outdef (no kind/subjects) must behave as pair/['execution'].
     _insert_template(raw, "bare-legacy")
     ok = {"stages": [_judgement("j", "execution", "pair", "bare-legacy")]}
     assert pipelines.register_pipeline("legacy-ok", ok)["version"] == 1
@@ -155,12 +128,10 @@ def test_legacy_bare_rubric_normalizes_to_pair_execution(pipelines, raw):
     with pytest.raises(ValueError, match="not among rubric"):
         pipelines.register_pipeline("legacy-bad", bad)
 
-
 def test_unknown_action_refused(pipelines):
     defn = {"stages": [{"key": "a", "action": "teleport"}]}
     with pytest.raises(ValueError, match="unknown action"):
         pipelines.register_pipeline("bad", defn)
-
 
 def test_duplicate_stage_key_refused(pipelines, rubrics):
     defn = {"stages": [
@@ -170,11 +141,9 @@ def test_duplicate_stage_key_refused(pipelines, rubrics):
     with pytest.raises(ValueError, match="duplicate stage key"):
         pipelines.register_pipeline("bad", defn)
 
-
 def test_empty_stages_refused(pipelines):
     with pytest.raises(ValueError, match="non-empty"):
         pipelines.register_pipeline("bad", {"stages": []})
-
 
 def test_bad_subject_judgement_foreach_refused(pipelines, rubrics):
     with pytest.raises(ValueError, match="subject"):
@@ -192,17 +161,12 @@ def test_bad_subject_judgement_foreach_refused(pipelines, rubrics):
                                    foreach="galaxy")]},
         )
 
-
 def test_stage_mixing_action_and_judgement_refused(pipelines, rubrics):
     defn = {"stages": [{"key": "x", "action": "branch_author",
                         "subject": "idea", "judgement": "pair",
                         "rubric": rubrics["pair"]}]}
     with pytest.raises(ValueError, match="mixes"):
         pipelines.register_pipeline("bad", defn)
-
-
-# ── FAIL-CLOSED matrix (contract §4) ───────────────────────────────────────
-
 
 def test_release_with_no_judgement_before_refused(pipelines, rubrics):
     defn = {"stages": [
@@ -213,7 +177,6 @@ def test_release_with_no_judgement_before_refused(pipelines, rubrics):
                                          "a single execution judgement gate"):
         pipelines.register_pipeline("bad", defn)
 
-
 def test_release_preceded_only_by_pair_execution_refused(pipelines, rubrics):
     defn = {"stages": [
         _judgement("exec-compare", "execution", "pair", rubrics["pair"]),
@@ -222,7 +185,6 @@ def test_release_preceded_only_by_pair_execution_refused(pipelines, rubrics):
     with pytest.raises(ValueError, match="pipeline refused: release requires "
                                          "a single execution judgement gate"):
         pipelines.register_pipeline("bad", defn)
-
 
 def test_release_after_pair_idea_plus_single_execution_accepted(pipelines, rubrics):
     defn = {"stages": [
@@ -234,12 +196,9 @@ def test_release_after_pair_idea_plus_single_execution_accepted(pipelines, rubri
     out = pipelines.register_pipeline("gated", defn)
     assert out["version"] == 1
 
-
 def test_release_after_single_execution_plus_pair_execution_accepted(
     pipelines, rubrics
 ):
-    # A pair execution comparison MAY rank branches — it just never
-    # substitutes for the single gate that is also present here.
     defn = {"stages": [
         _judgement("execution-each", "execution", "single", rubrics["single"]),
         _judgement("exec-compare", "execution", "pair", rubrics["pair"]),
@@ -247,7 +206,6 @@ def test_release_after_single_execution_plus_pair_execution_accepted(
     ]}
     out = pipelines.register_pipeline("gated2", defn)
     assert out["version"] == 1
-
 
 def test_pipeline_without_release_needs_no_gate(pipelines, rubrics):
     defn = {"stages": [
@@ -258,16 +216,13 @@ def test_pipeline_without_release_needs_no_gate(pipelines, rubrics):
     out = pipelines.register_pipeline("ungated-ok", defn)
     assert out["version"] == 1
 
-
 def test_single_execution_after_release_does_not_count(pipelines, rubrics):
-    # The gate must come BEFORE the release stage — order matters.
     defn = {"stages": [
         {"key": "release", "action": "audited_release"},
         _judgement("too-late", "execution", "single", rubrics["single"]),
     ]}
     with pytest.raises(ValueError, match="pipeline refused"):
         pipelines.register_pipeline("bad", defn)
-
 
 def test_single_idea_judgement_does_not_satisfy_gate(pipelines, rubrics):
     defn = {"stages": [
@@ -276,10 +231,6 @@ def test_single_idea_judgement_does_not_satisfy_gate(pipelines, rubrics):
     ]}
     with pytest.raises(ValueError, match="pipeline refused"):
         pipelines.register_pipeline("bad", defn)
-
-
-# ── digest canonicalization ────────────────────────────────────────────────
-
 
 def test_digest_stable_under_key_reordering(pipelines, rubrics):
     stage_a = {"key": "j", "subject": "idea", "judgement": "pair",
@@ -294,10 +245,6 @@ def test_digest_stable_under_key_reordering(pipelines, rubrics):
     assert r1["digest"] == r2["digest"]
     assert (r1["version"], r2["version"]) == (1, 2)
 
-
-# ── domain binding (permanent; UNIQUE(domain_id) + append-only) ────────────
-
-
 @pytest.fixture
 def domain(pipelines):
     from bin import domains
@@ -309,7 +256,6 @@ def domain(pipelines):
     )
     return "widget-lens"
 
-
 def test_bind_and_get_binding_round_trip(pipelines, rubrics, domain):
     pipelines.register_pipeline("tiny-flow", _valid_definition(rubrics))
     out = pipelines.bind_domain(domain, "tiny-flow")
@@ -320,18 +266,14 @@ def test_bind_and_get_binding_round_trip(pipelines, rubrics, domain):
     assert binding["version"] == 1
     assert binding["definition"]["stages"][0]["key"] == "idea-compare"
 
-
 def test_binding_pins_version_at_bind_time(pipelines, rubrics, domain):
     pipelines.register_pipeline("tiny-flow", _valid_definition(rubrics))
     pipelines.bind_domain(domain, "tiny-flow", version=1)
-    # later registrations never move an existing binding
     pipelines.register_pipeline("tiny-flow", _valid_definition(rubrics))
     assert pipelines.get_domain_binding(domain)["version"] == 1
 
-
 def test_unbound_domain_returns_none(pipelines, domain):
     assert pipelines.get_domain_binding(domain) is None
-
 
 def test_double_bind_refused_binding_is_permanent(pipelines, rubrics, domain):
     pipelines.register_pipeline("tiny-flow", _valid_definition(rubrics))
@@ -339,10 +281,8 @@ def test_double_bind_refused_binding_is_permanent(pipelines, rubrics, domain):
     pipelines.bind_domain(domain, "tiny-flow")
     with pytest.raises(ValueError, match="already bound.*permanent"):
         pipelines.bind_domain(domain, "other-flow")
-    # DB-level enforcement too: direct rebind attempts hit triggers/UNIQUE
     binding = pipelines.get_domain_binding(domain)
     assert binding["pipeline"] == "tiny-flow"
-
 
 def test_domain_pipeline_rows_immutable(pipelines, rubrics, domain, raw):
     pipelines.register_pipeline("tiny-flow", _valid_definition(rubrics))
@@ -352,26 +292,17 @@ def test_domain_pipeline_rows_immutable(pipelines, rubrics, domain, raw):
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         raw.execute("DELETE FROM domain_pipeline")
 
-
 def test_bind_unknown_domain_or_pipeline_raises(pipelines, rubrics):
     pipelines.register_pipeline("tiny-flow", _valid_definition(rubrics))
     with pytest.raises(LookupError, match="domain"):
         pipelines.bind_domain("no-such-domain", "tiny-flow")
 
-
-# ── seed-defaults ──────────────────────────────────────────────────────────
-
-
 def test_seed_defaults_requires_contract_rubrics(pipelines):
-    with pytest.raises(ValueError, match="pair-idea-wheel-v1"):
+    with pytest.raises(ValueError, match="pair-idea-wheel-v2"):
         pipelines.seed_defaults()
 
-
 def test_seed_defaults_registers_contract_pipeline(pipelines, raw):
-    # Shapes must satisfy stage/rubric compatibility: the idea-compare
-    # stage needs a pair rubric with 'idea' among its subjects, the
-    # execution-each stage a single rubric with 'execution'.
-    _insert_template(raw, "pair-idea-wheel-v1", {
+    _insert_template(raw, "pair-idea-wheel-v2", {
         "verdict_enum": ["yes", "no"],
         "judgement_kind": "pair",
         "subjects": ["idea"],
@@ -388,14 +319,9 @@ def test_seed_defaults_registers_contract_pipeline(pipelines, raw):
     keys = [s["key"] for s in got["definition"]["stages"]]
     assert keys == ["idea-compare", "author", "validate-each",
                     "execution-each", "release"]
-    # idempotent: same digest ⇒ no new version
     again = pipelines.seed_defaults()
     assert again["version"] == 1
     assert again["digest"] == out["digest"]
-
-
-# ── CLI smoke ──────────────────────────────────────────────────────────────
-
 
 def test_cli_register_get_bind_show_binding(
     pipelines, rubrics, domain, tmp_path, capsys

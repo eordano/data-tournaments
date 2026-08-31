@@ -14,15 +14,15 @@ Provider / credentials (resolved per request by ``role_lm_config``):
 ``OPENROUTER_API_KEY``
     No default. When set: the default base URL becomes OpenRouter, the
     default model panel becomes ``FRONTIER_OPENROUTER_MODELS``, and the key
-    is used as the API key unless ``LLM_GATEWAY_API_KEY`` is set.
+    is used as the API key unless ``LLM_HJKL_API_KEY`` is set.
 ``LLM_BASE_URL``
     Default: ``https://openrouter.ai/api/v1`` when ``OPENROUTER_API_KEY``
-    is set (non-empty), else ``https://llm.example/v1``. Trailing slashes
+    is set (non-empty), else ``https://llm.example.com/v1``. Trailing slashes
     are stripped. An empty string falls through to the default (``or``
     semantics).
-``LLM_GATEWAY_API_KEY``
+``LLM_HJKL_API_KEY``
     Default: unset. Precedence for the request API key:
-    ``LLM_GATEWAY_API_KEY`` > ``OPENROUTER_API_KEY`` > literal ``"none"``.
+    ``LLM_HJKL_API_KEY`` > ``OPENROUTER_API_KEY`` > literal ``"none"``.
 
 Model selection (explicit function argument always wins):
 
@@ -39,15 +39,17 @@ Model selection (explicit function argument always wins):
 Request bounds for optimizer roles (judge / reflection / curator):
 
 ``LLM_TIMEOUT_SECONDS``
-    Default ``90`` (float). Per-request timeout when the caller does not
-    pass an explicit timeout.
+    Default ``300`` (float). Per-request timeout when the caller does not
+    pass an explicit timeout. Sized so a full 16K-token reply does not
+    become a timeout.
 ``LLM_NUM_RETRIES``
     Default ``2`` (int). Retries when the caller does not pass an explicit
     value.
 
 Role-fixed values (not env-configurable): judge temperature ``0.0`` with no
-max_tokens cap; reflection temperature ``1.0`` / max_tokens ``16000``;
-curator temperature ``0.2`` / max_tokens ``8000``.
+max_tokens cap in the role table (``bin/optimize.py``'s ``_build_lm``
+applies ``16000``); reflection temperature ``1.0`` / max_tokens ``16000``;
+curator temperature ``0.2`` / max_tokens ``16000``.
 
 Card generation (``generator_config``):
 
@@ -75,7 +77,7 @@ Judge queue seed configuration (``judge_config``) is intentionally *not*
 env-driven: rater rows are seeded/synced with model from
 ``FRONTIER_OPENROUTER_MODELS``, base_url ``https://openrouter.ai/api/v1``,
 ``api_key_env: OPENROUTER_API_KEY`` (the key is read from that env var at
-judge time), temperature ``0.0``, timeout_seconds ``60``, num_retries ``1``.
+judge time), temperature ``0.0``, timeout_seconds ``180``, num_retries ``1``.
 
 Optimizer gates (``bin/optimize.py``):
 
@@ -97,7 +99,6 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Optional
 
-
 FRONTIER_OPENROUTER_MODELS = (
     "moonshotai/kimi-k3",
     "z-ai/glm-5.2",
@@ -105,15 +106,12 @@ FRONTIER_OPENROUTER_MODELS = (
 )
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-GATEWAY_BASE_URL = "https://llm.example/v1"
-
+HJKL_BASE_URL = "https://llm.example.com/v1"
 
 def default_model(index: int) -> str:
     """Panel model for a role index when OPENROUTER_API_KEY is set, else llm-default."""
     return FRONTIER_OPENROUTER_MODELS[index] if os.environ.get("OPENROUTER_API_KEY") else "llm-default"
 
-
-# ── Optimizer / generation LM roles ─────────────────────────────────────
 @dataclass(frozen=True)
 class LMConfig:
     """Fully resolved parameters for one dspy.LM construction."""
@@ -126,14 +124,17 @@ class LMConfig:
     num_retries: int
     max_tokens: Optional[int] = None
 
+def optimizer_concurrency() -> int:
+    return max(1, int(os.environ.get("OPTIMIZER_NUM_THREADS", "1")))
 
-# role → (model env var, default panel index, temperature, max_tokens)
+def optimizer_max_tokens() -> int:
+    return int(os.environ.get("OPTIMIZER_MAX_TOKENS", "16000"))
+
 _OPTIMIZER_ROLES = {
     "judge": ("LLM_MODEL", 0, 0.0, None),
-    "reflection": ("OPTIMIZER_MODEL", 1, 1.0, 16000),
-    "curator": ("CURATOR_MODEL", 2, 0.2, 8000),
+    "reflection": ("OPTIMIZER_MODEL", 1, 1.0, optimizer_max_tokens),
+    "curator": ("CURATOR_MODEL", 2, 0.2, optimizer_max_tokens),
 }
-
 
 def role_lm_config(
     model: Optional[str] = None,
@@ -152,9 +153,9 @@ def role_lm_config(
     openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
     base_url = (
         os.environ.get("LLM_BASE_URL")
-        or (OPENROUTER_BASE_URL if openrouter_key else GATEWAY_BASE_URL)
+        or (OPENROUTER_BASE_URL if openrouter_key else HJKL_BASE_URL)
     ).rstrip("/")
-    api_key = os.environ.get("LLM_GATEWAY_API_KEY", "") or openrouter_key or "none"
+    api_key = os.environ.get("LLM_HJKL_API_KEY", "") or openrouter_key or "none"
     chosen = model or os.environ.get("LLM_MODEL") or default_model(0)
     return LMConfig(
         model=chosen,
@@ -162,7 +163,7 @@ def role_lm_config(
         api_key=api_key,
         temperature=temperature,
         timeout=(
-            float(os.environ.get("LLM_TIMEOUT_SECONDS", "90"))
+            float(os.environ.get("LLM_TIMEOUT_SECONDS", "300"))
             if timeout is None
             else timeout
         ),
@@ -174,7 +175,6 @@ def role_lm_config(
         max_tokens=max_tokens,
     )
 
-
 def optimizer_lm_config(role: str, model: Optional[str] = None) -> LMConfig:
     """Resolved LM config for an optimizer role: judge, reflection, or curator."""
     try:
@@ -183,11 +183,16 @@ def optimizer_lm_config(role: str, model: Optional[str] = None) -> LMConfig:
         raise ValueError(
             f"unknown optimizer LM role: {role!r} (expected one of {sorted(_OPTIMIZER_ROLES)})"
         ) from None
+    if callable(max_tokens):
+        max_tokens = max_tokens()
     chosen = model or os.environ.get(model_env) or default_model(index)
-    return role_lm_config(chosen, temperature=temperature, max_tokens=max_tokens)
+    timeout = None
+    if max_tokens:
+        timeout = float(os.environ.get("OPTIMIZER_TIMEOUT_SECONDS", "1800"))
+    return role_lm_config(
+        chosen, temperature=temperature, max_tokens=max_tokens, timeout=timeout
+    )
 
-
-# ── Card generation ─────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class GeneratorConfig:
     """Bounds for the interactive corpus fan-out generation role."""
@@ -198,6 +203,13 @@ class GeneratorConfig:
     timeout: float
     num_retries: int
 
+def generator_explore() -> bool:
+    return os.environ.get("GENERATOR_EXPLORE", "1").strip().lower() not in (
+        "0", "false", "no", ""
+    )
+
+def generator_target_cards() -> int:
+    return int(os.environ.get("GENERATOR_TARGET_CARDS", "12"))
 
 def generator_config() -> GeneratorConfig:
     return GeneratorConfig(
@@ -213,13 +225,10 @@ def generator_config() -> GeneratorConfig:
         num_retries=int(os.environ.get("GENERATOR_NUM_RETRIES", "0")),
     )
 
-
 def generator_max_items() -> int:
     """Per-run corpus item budget when no explicit limit is given."""
     return int(os.environ.get("GENERATOR_MAX_ITEMS", "50"))
 
-
-# ── Judge queue (rater_config seed rows) ────────────────────────────────
 @dataclass(frozen=True)
 class JudgeConfig:
     """Seed rater_config for an LLM judge queue row (not env-driven)."""
@@ -234,26 +243,21 @@ class JudgeConfig:
     def as_dict(self) -> dict:
         return asdict(self)
 
-
 def judge_config(model: Optional[str] = None) -> JudgeConfig:
     return JudgeConfig(
         model=model or FRONTIER_OPENROUTER_MODELS[0],
         base_url=OPENROUTER_BASE_URL,
         api_key_env="OPENROUTER_API_KEY",
         temperature=0.0,
-        timeout_seconds=60,
+        timeout_seconds=180,
         num_retries=1,
     )
 
-
-# ── Optimizer gates ─────────────────────────────────────────────────────
 def optimizer_min_validation() -> int:
     return int(os.environ.get("OPTIMIZER_MIN_VALIDATION", "2"))
 
-
 def optimizer_min_holdout() -> int:
     return int(os.environ.get("OPTIMIZER_MIN_HOLDOUT", "2"))
-
 
 def optimizer_context_char_budget() -> int:
     return int(os.environ.get("OPTIMIZER_CONTEXT_CHAR_BUDGET", "48000"))

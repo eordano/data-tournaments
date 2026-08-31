@@ -71,7 +71,9 @@ defmodule TournamentUiWeb.CampaignsLiveTest do
   end
 
   setup do
-    home = "/tmp/dt-campaigns-live-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-campaigns-live-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 

@@ -6,6 +6,15 @@ uses a separate curator model to merge those lessons into an incremental
 playbook. The production seed is retained unless the curated candidate beats it
 on the untouched holdout set.
 
+Promotion is four conjuncts — effective playbook change, the improvement
+margin, exact accuracy and invalid rate — and the run row records which one
+decided the outcome. The margin itself carries provenance (caller,
+OPTIMIZER_MIN_IMPROVEMENT, or DEFAULT_MIN_IMPROVEMENT) and the holdout size
+it needs to mean anything: on N holdout examples no improvement can land
+between 0 and 1/N, so a margin finer than that is a threshold nothing can
+fail. A run whose improvement clears the configured margin but not one
+holdout example is reported as insufficient-evidence, never accepted.
+
 Output is line-oriented so Phoenix can tail it directly.
 """
 from __future__ import annotations
@@ -13,6 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -20,7 +30,7 @@ import sys
 import time
 import uuid
 from contextlib import redirect_stdout
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -29,8 +39,11 @@ os.environ.setdefault(
     str(Path(os.environ.get("DATA_TOURNAMENTS_HOME", "/tmp/data-tournaments")) / ".dspy-cache"),
 )
 
+from concurrent.futures import ThreadPoolExecutor
+
 import dspy
 
+from bin import judgement as _judgement
 from bin import llm_config as _llm_config
 from bin import prompts as _prompts
 from bin.context_playbook import (
@@ -40,27 +53,29 @@ from bin.context_playbook import (
     split_prompt,
 )
 
-
-# Re-exported from bin.llm_config (single source of truth for the panel).
 FRONTIER_OPENROUTER_MODELS = _llm_config.FRONTIER_OPENROUTER_MODELS
-VERDICTS = {
-    "a-clearly-better",
-    "a-marginally-better",
-    "tie-both-strong",
-    "tie-both-weak",
-    "b-marginally-better",
-    "b-clearly-better",
-    "incoherent",
-    "skip",
-}
 
+DEFAULT_RUBRIC = _judgement.DEFAULT_TEMPLATE_NAME
+VERDICTS = set(_judgement.PAIR_WHEEL_TEMPLATE_DEFINITION["verdict_enum"])
+
+THE_OPTIMIZER_GRADES_AGAINST_THE_RUBRIC_THE_JUDGE_WAS_HANDED = (
+    "VERDICTS is the enum SEEDED under DEFAULT_RUBRIC, not a copy of it. A "
+    "copy that drifted made every stored human label 'invalid' to the metric, "
+    "so the optimizer scored a perfect judge at zero and promoted nothing."
+)
+assert VERDICTS == {
+    verdict
+    for name, _version, definition, _prompt, _instructions
+    in _judgement.WHEEL_SEED_TEMPLATES
+    if name == DEFAULT_RUBRIC
+    for verdict in definition["verdict_enum"]
+}, THE_OPTIMIZER_GRADES_AGAINST_THE_RUBRIC_THE_JUDGE_WAS_HANDED
 
 DATA_HOME = lambda: Path(os.environ.get("DATA_TOURNAMENTS_HOME", "/tmp/data-tournaments"))
 DB_PATH = lambda: DATA_HOME() / "judgements.db"
 
-
 def load_trainset(
-    rubric: str = "card-prioritizer-v0", *, domain: Optional[str] = None
+    rubric: str = DEFAULT_RUBRIC, *, domain: Optional[str] = None
 ) -> list[dspy.Example]:
     """Load valid human preferences for one rubric and optional domain."""
     sql = """
@@ -124,10 +139,7 @@ def load_trainset(
         conn.close()
     return out
 
-
 def _example_fingerprint(a: dict, b: dict) -> str:
-    # Card order is deliberately ignored: the same pair with A/B swapped is
-    # still the same evaluation unit and must never cross split boundaries.
     cards = sorted(
         [
             [a.get("title", ""), a.get("body", ""), a.get("source_ref", "")],
@@ -137,13 +149,11 @@ def _example_fingerprint(a: dict, b: dict) -> str:
     canonical = json.dumps(cards, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
-
 def _verdict_side(value: str) -> str:
     for side in ("a", "b", "tie"):
         if value.startswith(side + "-"):
             return side
     return value
-
 
 @dataclass(frozen=True)
 class DatasetPartitions:
@@ -152,7 +162,6 @@ class DatasetPartitions:
     holdout: list[dspy.Example]
     duplicates_dropped: int
     digest: str
-
 
 def partition_examples(examples: list[dspy.Example], *, seed: int = 0) -> DatasetPartitions:
     """Deduplicate and deterministically create leakage-free 3-way splits."""
@@ -173,8 +182,6 @@ def partition_examples(examples: list[dspy.Example], *, seed: int = 0) -> Datase
             ).hexdigest()
         )
 
-    # Interleave label buckets so tiny validation/holdout sets do not contain
-    # only one verdict direction when the source data has more variety.
     ordered: list[dspy.Example] = []
     sides = sorted(buckets, key=lambda side: (-len(buckets[side]), side))
     while any(buckets[side] for side in sides):
@@ -199,7 +206,6 @@ def partition_examples(examples: list[dspy.Example], *, seed: int = 0) -> Datase
         digest=digest,
     )
 
-
 def verdict_score(gold: str, got: str) -> float:
     if got not in VERDICTS:
         return 0.0
@@ -208,7 +214,6 @@ def verdict_score(gold: str, got: str) -> float:
     if _verdict_side(gold) == _verdict_side(got):
         return 0.6
     return 0.0
-
 
 def verdict_match_metric(example, pred, trace=None, pred_name=None, pred_trace=None):
     """GEPA metric with actionable, per-trajectory textual feedback."""
@@ -239,7 +244,6 @@ def verdict_match_metric(example, pred, trace=None, pred_name=None, pred_trace=N
     )
     return dspy.Prediction(score=score, feedback=feedback)
 
-
 @dataclass(frozen=True)
 class ExampleOutcome:
     example_id: str
@@ -247,7 +251,6 @@ class ExampleOutcome:
     predicted: str
     score: float
     error: Optional[str] = None
-
 
 @dataclass(frozen=True)
 class EvaluationSummary:
@@ -263,31 +266,32 @@ class EvaluationSummary:
         data.pop("outcomes")
         return data
 
+def _score_example(program, example: dspy.Example) -> ExampleOutcome:
+    try:
+        pred = program(**example.inputs())
+        got = (getattr(pred, "verdict", "") or "").strip()
+        return ExampleOutcome(
+            example_id=example.example_id,
+            gold=example.verdict,
+            predicted=got,
+            score=verdict_score(example.verdict, got),
+        )
+    except Exception as exc:
+        return ExampleOutcome(
+            example_id=example.example_id,
+            gold=example.verdict,
+            predicted="",
+            score=0.0,
+            error=f"{type(exc).__name__}: {exc}",
+        )
 
 def _evaluate_program(program, examples: list[dspy.Example]) -> EvaluationSummary:
-    outcomes: list[ExampleOutcome] = []
-    for example in examples:
-        try:
-            pred = program(**example.inputs())
-            got = (getattr(pred, "verdict", "") or "").strip()
-            outcomes.append(
-                ExampleOutcome(
-                    example_id=example.example_id,
-                    gold=example.verdict,
-                    predicted=got,
-                    score=verdict_score(example.verdict, got),
-                )
-            )
-        except Exception as exc:
-            outcomes.append(
-                ExampleOutcome(
-                    example_id=example.example_id,
-                    gold=example.verdict,
-                    predicted="",
-                    score=0.0,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-            )
+    workers = min(_llm_config.optimizer_concurrency(), len(examples)) or 1
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            outcomes = list(pool.map(lambda e: _score_example(program, e), examples))
+    else:
+        outcomes = [_score_example(program, e) for e in examples]
     count = len(outcomes)
     return EvaluationSummary(
         score=sum(item.score for item in outcomes) / count,
@@ -300,7 +304,6 @@ def _evaluate_program(program, examples: list[dspy.Example]) -> EvaluationSummar
         examples=count,
         outcomes=outcomes,
     )
-
 
 def _compile_with_gepa(
     program,
@@ -326,11 +329,10 @@ def _compile_with_gepa(
         log_dir=str(log_dir),
         track_stats=True,
         add_format_failure_as_feedback=True,
-        num_threads=1,
+        num_threads=_llm_config.optimizer_concurrency(),
         **budget,
     )
     return optimizer.compile(program, trainset=trainset, valset=valset)
-
 
 class CurateContextDelta(dspy.Signature):
     """Extract durable judge lessons as structured deltas, never a replacement prompt.
@@ -351,7 +353,6 @@ class CurateContextDelta(dspy.Signature):
     optimization_evidence = dspy.InputField(desc="Dataset and search provenance")
     delta_json = dspy.OutputField(desc='Strict JSON: {"entries":[{"op":"add|reinforce|weaken|retire","id":"(lifecycle ops only)","section":"strategy|evidence|mistake","content":"..."}]}')
 
-
 def _json_object(value: str) -> dict:
     text = (value or "").strip()
     text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
@@ -360,7 +361,6 @@ def _json_object(value: str) -> dict:
     if not isinstance(parsed, dict):
         raise ValueError("curator output must be a JSON object")
     return parsed
-
 
 def _scope_deltas(deltas: list, domain: str) -> list:
     """Domain-scoped runs must not mint or claim global/foreign lessons.
@@ -372,7 +372,6 @@ def _scope_deltas(deltas: list, domain: str) -> list:
     if not domain:
         return deltas
     return [{**item, "domain": domain} for item in deltas]
-
 
 def _playbook_change_stats(existing, merged) -> dict:
     """Per-op breakdown of what a merge actually did to the playbook.
@@ -397,7 +396,6 @@ def _playbook_change_stats(existing, merged) -> dict:
             if eid in existing_by_id and entry.harmful > existing_by_id[eid].harmful
         ),
     }
-
 
 def _curate_context(
     seed_prompt: str,
@@ -424,17 +422,11 @@ def _curate_context(
     merged = merge_entries(existing, cleaned, provenance=provenance, domain=domain)
     stats = _playbook_change_stats(existing, merged)
     if domain:
-        # A domain-scoped candidate prompt renders only unscoped entries plus
-        # its own domain's — foreign-domain lessons never reach this judge.
-        # (Scoped adds are forced into the active domain upstream, so nothing
-        # minted by this run can be filtered out here.) Global runs render
-        # everything: the umbrella doc must never lose entries via filtering.
         rendered = entries_for_domain(merged, domain)
         stats["foreign_excluded"] = len(merged) - len(rendered)
     else:
         rendered = merged
     return render_prompt(base, rendered), stats, cleaned
-
 
 def _extract_instructions(program) -> str:
     predictor = getattr(program, "predictor", None)
@@ -448,24 +440,19 @@ def _extract_instructions(program) -> str:
             return instructions
     raise RuntimeError("GEPA returned a program without optimized predictor instructions")
 
-
-def _build_lm(model: Optional[str] = None) -> dspy.LM:
-    return _build_role_lm(model, temperature=0.0)
-
+def _build_lm(model: Optional[str] = None, max_tokens: int = 16000) -> dspy.LM:
+    return _build_role_lm(model, temperature=0.0, max_tokens=max_tokens)
 
 def _build_reflection_lm(model: Optional[str] = None) -> dspy.LM:
     cfg = _llm_config.optimizer_lm_config("reflection", model)
     return _build_role_lm(cfg.model, temperature=cfg.temperature, max_tokens=cfg.max_tokens)
 
-
 def _build_curator_lm(model: Optional[str] = None) -> dspy.LM:
     cfg = _llm_config.optimizer_lm_config("curator", model)
     return _build_role_lm(cfg.model, temperature=cfg.temperature, max_tokens=cfg.max_tokens)
 
-
 def _default_model(index: int) -> str:
     return _llm_config.default_model(index)
-
 
 def _build_role_lm(
     model: Optional[str],
@@ -494,6 +481,98 @@ def _build_role_lm(
         kwargs["max_tokens"] = cfg.max_tokens
     return dspy.LM(**kwargs)
 
+DEFAULT_MIN_IMPROVEMENT = 0.01
+
+ACCEPTANCE_CONJUNCTS = (
+    "effective_change",
+    "improvement_margin",
+    "exact_accuracy",
+    "invalid_rate",
+)
+
+def _resolve_min_improvement(value: Optional[float]) -> tuple[float, str]:
+    """The promotion margin and where it came from — caller, environment,
+    or the module default. Provenance is recorded on the run row so the
+    number is never just a signature default nobody can audit."""
+    if value is not None:
+        return float(value), "caller"
+    env = os.environ.get("OPTIMIZER_MIN_IMPROVEMENT")
+    if env:
+        return float(env), "env:OPTIMIZER_MIN_IMPROVEMENT"
+    return DEFAULT_MIN_IMPROVEMENT, "default"
+
+def _resolve_margin_evidence_floor(value: Optional[int]) -> tuple[Optional[int], str]:
+    if value is not None:
+        return int(value), "caller"
+    env = os.environ.get("OPTIMIZER_MARGIN_EVIDENCE_FLOOR")
+    if env:
+        return int(env), "env:OPTIMIZER_MARGIN_EVIDENCE_FLOOR"
+    return None, "unset"
+
+def margin_resolution_floor(min_improvement: float) -> int:
+    """Holdout examples needed for a margin of ``min_improvement`` to be a
+    real threshold.
+
+    One holdout example is worth 1/N of the score, so on a holdout of N
+    examples no improvement can land strictly between 0 and 1/N. A margin
+    finer than 1/N therefore fails nothing it would not also fail at 0 —
+    the fixed-threshold-without-a-null hazard. ceil(1/margin) is the
+    smallest holdout on which the configured margin bites.
+    """
+    if min_improvement <= 0:
+        return 0
+    return math.ceil(1.0 / min_improvement)
+
+def margin_policy(
+    *,
+    min_improvement: float,
+    source: str,
+    holdout_size: int,
+    evidence_floor: Optional[int] = None,
+    evidence_floor_source: str = "unset",
+) -> dict:
+    """The margin, its provenance, and the holdout resolution it needs.
+
+    ``effective_min_improvement`` is the larger of the configured margin
+    and one holdout example's worth of score: a run cannot buy resolution
+    it did not measure. ``binding`` names which of the two is doing the
+    work, so the run row says whether the threshold was a judgement call
+    or a measurement limit.
+    """
+    resolution_floor = margin_resolution_floor(min_improvement)
+    holdout_resolution = 1.0 / holdout_size if holdout_size > 0 else float("inf")
+    effective = max(min_improvement, holdout_resolution)
+    return {
+        "min_improvement": min_improvement,
+        "source": source,
+        "resolution_floor_examples": resolution_floor,
+        "holdout_examples": holdout_size,
+        "holdout_resolution": holdout_resolution,
+        "effective_min_improvement": effective,
+        "binding": (
+            "configured-margin"
+            if min_improvement >= holdout_resolution
+            else "holdout-resolution"
+        ),
+        "evidence_floor": evidence_floor,
+        "evidence_floor_source": evidence_floor_source,
+    }
+
+def _margin_verdict(improvement: float, policy: dict) -> tuple[bool, bool]:
+    """(margin conjunct holds, the evidence is thick enough to judge it).
+
+    An improvement that clears the configured margin but not one holdout
+    example's worth of score is not a small win — it is an unmeasurable
+    one, reported as insufficient-evidence rather than accepted.
+    """
+    holds = improvement >= policy["effective_min_improvement"]
+    if holds:
+        return True, True
+    unmeasurable = (
+        improvement >= policy["min_improvement"]
+        and improvement < policy["holdout_resolution"]
+    )
+    return False, not unmeasurable
 
 @dataclass
 class OptimizeResult:
@@ -516,7 +595,9 @@ class OptimizeResult:
     gepa: dict
     playbook_entries_added: int
     artifact_dir: str
-
+    margin: dict = field(default_factory=dict)
+    conjuncts: dict = field(default_factory=dict)
+    deciding_conjunct: str = ""
 
 def _gepa_stats(program) -> dict:
     details = getattr(program, "detailed_results", None)
@@ -532,7 +613,6 @@ def _gepa_stats(program) -> dict:
         "best_candidate_index": getattr(details, "best_idx", None),
     }
 
-
 def _paired_changes(baseline: EvaluationSummary, candidate: EvaluationSummary) -> dict:
     base = {item.example_id: item.score for item in baseline.outcomes}
     deltas = [item.score - base[item.example_id] for item in candidate.outcomes]
@@ -542,7 +622,6 @@ def _paired_changes(baseline: EvaluationSummary, candidate: EvaluationSummary) -
         "regressed": sum(delta < 0 for delta in deltas),
     }
 
-
 def _artifact_dir(prompt_name: str, seed: int) -> Path:
     safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", prompt_name).strip("-")
     run_name = f"{time.strftime('%Y%m%d-%H%M%S')}-{seed}-{uuid.uuid4().hex[:8]}"
@@ -550,10 +629,8 @@ def _artifact_dir(prompt_name: str, seed: int) -> Path:
     path.mkdir(parents=True, exist_ok=False)
     return path
 
-
 def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True, default=str) + "\n")
-
 
 def _insufficient_evidence_result(
     *,
@@ -566,6 +643,7 @@ def _insufficient_evidence_result(
     seed: int,
     budget: str,
     prompt_name: str,
+    margin: Optional[dict] = None,
 ) -> OptimizeResult:
     """Retain the production seed without spending any LM budget."""
     print(
@@ -593,18 +671,21 @@ def _insufficient_evidence_result(
         gepa={"insufficient_evidence_reason": reason},
         playbook_entries_added=0,
         artifact_dir=str(run_dir),
+        margin=dict(margin or {}),
+        conjuncts={},
+        deciding_conjunct="evidence",
     )
     _write_json(run_dir / "result.json", asdict(result))
     return result
 
-
 def run(
     *,
-    rubric: str = "card-prioritizer-v0",
+    rubric: str = DEFAULT_RUBRIC,
     auto: Optional[str] = None,
     max_metric_calls: int = 40,
     min_trainset: int = 7,
-    min_improvement: float = 0.01,
+    min_improvement: Optional[float] = None,
+    margin_evidence_floor: Optional[int] = None,
     prompt_name: str = "judge-instructions",
     domain: Optional[str] = None,
     model: Optional[str] = None,
@@ -612,6 +693,10 @@ def run(
     curator_model: Optional[str] = None,
     seed: int = 0,
 ) -> OptimizeResult:
+    min_improvement, margin_source = _resolve_min_improvement(min_improvement)
+    evidence_floor, evidence_floor_source = _resolve_margin_evidence_floor(
+        margin_evidence_floor
+    )
     examples = load_trainset(rubric=rubric, domain=domain)
     scope = f" for domain {domain!r}" if domain else " across all domains"
     print(f"[optimize] loaded {len(examples)} valid human examples{scope}", flush=True)
@@ -634,6 +719,13 @@ def run(
             seed=seed,
             budget=budget,
             prompt_name=prompt_name,
+            margin=margin_policy(
+                min_improvement=min_improvement,
+                source=margin_source,
+                holdout_size=0,
+                evidence_floor=evidence_floor,
+                evidence_floor_source=evidence_floor_source,
+            ),
         )
     print(
         "[optimize] split "
@@ -646,6 +738,20 @@ def run(
 
     min_validation = _llm_config.optimizer_min_validation()
     min_holdout = _llm_config.optimizer_min_holdout()
+    margin = margin_policy(
+        min_improvement=min_improvement,
+        source=margin_source,
+        holdout_size=len(partitions.holdout),
+        evidence_floor=evidence_floor,
+        evidence_floor_source=evidence_floor_source,
+    )
+    print(
+        f"[optimize] promotion margin {min_improvement} (source {margin_source}); "
+        f"it bites from {margin['resolution_floor_examples']} holdout examples, "
+        f"this run has {margin['holdout_examples']}; effective margin "
+        f"{margin['effective_min_improvement']:.3f} ({margin['binding']})",
+        flush=True,
+    )
     if len(partitions.validation) < min_validation or len(partitions.holdout) < min_holdout:
         return _insufficient_evidence_result(
             reason=(
@@ -660,6 +766,25 @@ def run(
             seed=seed,
             budget=budget,
             prompt_name=prompt_name,
+            margin=margin,
+        )
+    if evidence_floor is not None and len(partitions.holdout) < evidence_floor:
+        return _insufficient_evidence_result(
+            reason=(
+                f"holdout={len(partitions.holdout)} is below the configured "
+                f"margin evidence floor {evidence_floor} "
+                f"({evidence_floor_source}) for min_improvement="
+                f"{min_improvement}"
+            ),
+            total_examples=len(examples),
+            trainset_size=len(partitions.train),
+            validation_size=len(partitions.validation),
+            holdout_size=len(partitions.holdout),
+            digest=partitions.digest,
+            seed=seed,
+            budget=budget,
+            prompt_name=prompt_name,
+            margin=margin,
         )
 
     judge_lm = _build_lm(model=model)
@@ -735,25 +860,53 @@ def run(
         flush=True,
     )
 
-    # Gate on *effective* playbook change, not net growth: a run that retires
-    # two harmful lessons and adds one good one shrinks the playbook but is
-    # still a real, promotable improvement. Only lifecycle ops count —
-    # render-time foreign filtering is not a curator change.
     effective_change = (
         sum(playbook_changes.get(k, 0) for k in ("added", "removed", "reinforced", "weakened")) > 0
     )
-    accepted = (
-        effective_change
-        and improvement >= min_improvement
-        and candidate.exact_accuracy >= baseline.exact_accuracy
-        and candidate.invalid_rate <= baseline.invalid_rate
-    )
-    if accepted:
+    margin_holds, margin_measurable = _margin_verdict(improvement, margin)
+    conjuncts = {
+        "effective_change": effective_change,
+        "improvement_margin": margin_holds,
+        "exact_accuracy": candidate.exact_accuracy >= baseline.exact_accuracy,
+        "invalid_rate": candidate.invalid_rate <= baseline.invalid_rate,
+    }
+    failed = [name for name in ACCEPTANCE_CONJUNCTS if not conjuncts[name]]
+    accepted = not failed
+    if not margin_measurable:
+        accepted = False
+        decision = "insufficient-evidence"
+        deciding_conjunct = "improvement_margin"
+    elif accepted:
         decision = "accepted"
+        deciding_conjunct = "all-conjuncts-hold"
     elif improvement < 0 or candidate.exact_accuracy < baseline.exact_accuracy:
         decision = "regression"
+        deciding_conjunct = (
+            "exact_accuracy" if not conjuncts["exact_accuracy"] else failed[0]
+        )
     else:
         decision = "plateau"
+        deciding_conjunct = failed[0]
+    margin = {
+        **margin,
+        "improvement": improvement,
+        "holds": margin_holds,
+        "measurable": margin_measurable,
+    }
+    print(
+        f"[optimize] decision {decision} decided by {deciding_conjunct} "
+        f"(conjuncts {conjuncts})",
+        flush=True,
+    )
+    if not margin_measurable:
+        print(
+            f"[optimize] improvement {improvement:+.3f} clears the configured "
+            f"margin {min_improvement} but not one holdout example "
+            f"({margin['holdout_resolution']:.3f} on "
+            f"{margin['holdout_examples']} examples) — insufficient evidence, "
+            f"not a small win",
+            flush=True,
+        )
 
     candidate_version = None
     if accepted:
@@ -788,6 +941,9 @@ def run(
         gepa={**gepa_stats, "paired_holdout": paired},
         playbook_entries_added=playbook_changes["added"],
         artifact_dir=str(run_dir),
+        margin=margin,
+        conjuncts=conjuncts,
+        deciding_conjunct=deciding_conjunct,
     )
     _write_json(
         run_dir / "result.json",
@@ -809,7 +965,6 @@ def run(
     (run_dir / "curated-candidate-prompt.txt").write_text(candidate_prompt)
     print(f"[optimize] artifacts: {run_dir}", flush=True)
     return result
-
 
 def run_with_persistence(*, run_id: int, **kwargs) -> None:
     from bin import optimizer_runs
@@ -850,15 +1005,25 @@ def run_with_persistence(*, run_id: int, **kwargs) -> None:
         )
         raise
 
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rubric", default="card-prioritizer-v0")
+    parser.add_argument("--rubric", default=DEFAULT_RUBRIC)
     budget = parser.add_mutually_exclusive_group()
     budget.add_argument("--auto", choices=["light", "medium", "heavy"], default=None)
     budget.add_argument("--max-metric-calls", type=int, default=40)
     parser.add_argument("--min-trainset", type=int, default=7)
-    parser.add_argument("--min-improvement", type=float, default=0.01)
+    parser.add_argument(
+        "--min-improvement", type=float, default=None,
+        help="promotion margin; default reads OPTIMIZER_MIN_IMPROVEMENT, "
+             f"else {DEFAULT_MIN_IMPROVEMENT}. Its provenance is recorded "
+             "on the run row",
+    )
+    parser.add_argument(
+        "--margin-evidence-floor", type=int, default=None,
+        help="minimum holdout examples before the margin may accept a run; "
+             "default reads OPTIMIZER_MARGIN_EVIDENCE_FLOOR. Below it a run "
+             "is insufficient-evidence, never accepted",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--prompt-name", default="judge-instructions")
     parser.add_argument("--domain", default=None)
@@ -873,6 +1038,7 @@ def main():
         "max_metric_calls": args.max_metric_calls,
         "min_trainset": args.min_trainset,
         "min_improvement": args.min_improvement,
+        "margin_evidence_floor": args.margin_evidence_floor,
         "prompt_name": args.prompt_name,
         "domain": args.domain,
         "model": args.model,
@@ -888,7 +1054,6 @@ def main():
     except RuntimeError as exc:
         print(f"[optimize] aborted: {exc}", file=sys.stderr, flush=True)
         raise SystemExit(2) from exc
-
 
 if __name__ == "__main__":
     main()

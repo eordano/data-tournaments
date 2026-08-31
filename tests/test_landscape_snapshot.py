@@ -8,7 +8,6 @@ from bin.landscape.evidence import EvidenceRef, SourceType, TrustTier
 from bin.landscape.snapshot import FrozenRepoSnapshot, LandscapeSnapshot
 from bin.workorder import RepoSnapshot
 
-
 def ref(uri: str, tier: TrustTier = TrustTier.TIER2_INTERNAL, **kw) -> EvidenceRef:
     return EvidenceRef(
         source_type=SourceType.DOC,
@@ -16,7 +15,6 @@ def ref(uri: str, tier: TrustTier = TrustTier.TIER2_INTERNAL, **kw) -> EvidenceR
         trust_tier=tier,
         **kw,
     )
-
 
 def repo(**overrides) -> FrozenRepoSnapshot:
     base = dict(
@@ -28,7 +26,6 @@ def repo(**overrides) -> FrozenRepoSnapshot:
     base.update(overrides)
     return FrozenRepoSnapshot(**base)
 
-
 def snap(evidence, repos=(), **kw) -> LandscapeSnapshot:
     fields = dict(
         project="unity-explorer",
@@ -39,14 +36,13 @@ def snap(evidence, repos=(), **kw) -> LandscapeSnapshot:
     fields.update(kw)
     return LandscapeSnapshot(**fields)
 
-
 class TestDigestDeterminism:
     def test_insertion_order_does_not_matter(self):
         a, b, c = ref("doc://a"), ref("doc://b"), ref("doc://c")
         s1 = snap([a, b, c])
         s2 = snap([c, a, b])
         assert s1.digest == s2.digest
-        assert s1 == s2  # normalized order makes them the same object
+        assert s1 == s2
 
     def test_repo_order_does_not_matter(self):
         r1, r2 = repo(root="/repos/a"), repo(root="/repos/b")
@@ -76,7 +72,6 @@ class TestDigestDeterminism:
         assert len(d) == 64
         assert set(d) <= set("0123456789abcdef")
 
-
 class TestImmutability:
     def test_snapshot_mutation_raises(self):
         s = snap([ref("doc://a")])
@@ -96,9 +91,7 @@ class TestImmutability:
             r.base_commit = "b" * 40
 
     def test_frozen_repo_is_a_workorder_repo_snapshot(self):
-        # Reuse, not duplication: the landscape repo model IS the workorder one.
         assert issubclass(FrozenRepoSnapshot, RepoSnapshot)
-
 
 class TestRoundTrip:
     def test_model_dump_validate_round_trip(self):
@@ -111,7 +104,6 @@ class TestRoundTrip:
         s = snap([ref("doc://a")], [repo(dirty=True)])
         again = LandscapeSnapshot.model_validate_json(s.model_dump_json())
         assert again.digest == s.digest
-
 
 class TestValidation:
     def test_empty_project_rejected(self):

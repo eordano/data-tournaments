@@ -25,12 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SERVER = REPO_ROOT / "bin" / "landscape_mcp.py"
 ASSEMBLE_PACK_SCRIPT = REPO_ROOT / "bin" / "assemble_pack.py"
 
-# Planted secret value: must NEVER appear in any server response (S1).
 PLANTED_SECRET = "sk-SUPERSECRET-b6f2c9e1"
-
-
-# ── seeded catalog ────────────────────────────────────────────────────────
-
 
 @pytest.fixture
 def seeded(tmp_data_home):
@@ -54,7 +49,6 @@ def seeded(tmp_data_home):
         kind="git_repo",
         locator="https://github.com/example/unity-explorer",
         trust_tier=1,
-        # S1 bait: a secret-looking config value that must never be served.
         config={"api_key": PLANTED_SECRET, "branch": "main"},
     )
 
@@ -97,10 +91,6 @@ def seeded(tmp_data_home):
         "pack_role": "creator",
     }
 
-
-# ── subprocess JSON-RPC client ────────────────────────────────────────────
-
-
 class McpClient:
     def __init__(self, capabilities: str = ""):
         cmd = [sys.executable, str(SERVER)]
@@ -112,7 +102,7 @@ class McpClient:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env=os.environ.copy(),  # carries the monkeypatched DATA_TOURNAMENTS_HOME
+            env=os.environ.copy(),
             cwd=str(REPO_ROOT),
         )
         self._id = 0
@@ -128,7 +118,7 @@ class McpClient:
         line = self.proc.stdout.readline()
         assert line, f"server closed stdout on {method} (stderr: {self.proc.stderr.read()[:500]})"
         self.raw_responses.append(line)
-        resp = json.loads(line)  # every stdout line must be a clean JSON frame
+        resp = json.loads(line)
         assert resp["jsonrpc"] == "2.0"
         assert resp["id"] == self._id
         return resp
@@ -149,13 +139,11 @@ class McpClient:
         except Exception:
             self.proc.kill()
 
-
 @pytest.fixture
 def client(seeded):
     c = McpClient()
     yield c
     c.close()
-
 
 def _payload(resp: dict) -> dict:
     """Decode the JSON body of a resources/read result."""
@@ -163,10 +151,6 @@ def _payload(resp: dict) -> dict:
     item = resp["result"]["contents"][0]
     assert item["mimeType"] == "application/json"
     return json.loads(item["text"])
-
-
-# ── handshake ─────────────────────────────────────────────────────────────
-
 
 class TestHandshake:
     def test_initialize(self, client):
@@ -183,10 +167,6 @@ class TestHandshake:
         assert resp["error"]["code"] == -32601
         assert "Traceback" not in json.dumps(resp)
 
-
-# ── resources ─────────────────────────────────────────────────────────────
-
-
 class TestResources:
     def test_list_enumerates_indexes_and_mutable_entities(self, client, seeded):
         client.initialize()
@@ -196,7 +176,6 @@ class TestResources:
         assert "landscape://skills" in uris
         assert f"landscape://projects/{seeded['project_id']}" in uris
         assert f"landscape://sources/{seeded['source_id']}" in uris
-        # R3: packs are never enumerated.
         assert not any(u.startswith("landscape://packs") for u in uris)
 
     def test_read_project_index(self, client, seeded):
@@ -211,7 +190,7 @@ class TestResources:
         client.initialize()
         body = _payload(client.read(f"landscape://projects/{seeded['project_id']}"))
         assert body["name"] == "unity-explorer"
-        assert body["updated_at"]  # R1: mutable entity carries updated_at
+        assert body["updated_at"]
         assert [s["name"] for s in body["sources"]] == ["repo"]
         assert [c["name"] for c in body["components"]] == ["ui"]
 
@@ -221,7 +200,7 @@ class TestResources:
         assert body["name"] == "repo"
         assert body["project"] == "unity-explorer"
         assert body["trust_tier"] == 1
-        assert body["updated_at"]  # R1: mutable entity carries updated_at
+        assert body["updated_at"]
 
     def test_read_snapshot_by_digest(self, client, seeded):
         client.initialize()
@@ -238,7 +217,6 @@ class TestResources:
         assert body["digest"] == seeded["pack_digest"]
         assert body["role"] == seeded["pack_role"]
         assert body["snapshot_digest"] == seeded["snapshot_digest"]
-        # R1: served exactly as assembled — evidence listed by digest.
         assert sorted(body["pack"]["evidence"]) == sorted(
             [seeded["evidence_internal"], seeded["evidence_external"]]
         )
@@ -284,15 +262,11 @@ class TestResources:
             assert resp["error"]["code"] in (-32002,), uri
             assert "Traceback" not in json.dumps(resp), uri
 
-
-# ── tools: capability gating (T1/T2) ─────────────────────────────────────
-
-
 class TestCapabilityGating:
     def test_tools_list_empty_without_capabilities(self, client):
-        client.initialize()  # default session: no --capabilities
+        client.initialize()
         resp = client.request("tools/list")
-        assert resp["result"]["tools"] == []  # T2 deny-by-default
+        assert resp["result"]["tools"] == []
 
     def test_tools_list_shows_only_granted(self, seeded):
         c = McpClient(capabilities="assemble_pack")
@@ -322,7 +296,7 @@ class TestCapabilityGating:
                 "assemble_pack",
                 {"project_id": "unity-explorer", "role": "creator", "objective": "x"},
             )
-            assert "result" in resp  # dispatched; backend availability may vary
+            assert "result" in resp
         finally:
             c.close()
 
@@ -331,8 +305,6 @@ class TestCapabilityGating:
         reason="bin/assemble_pack.py not on disk yet (built in parallel wave)",
     )
     def test_assemble_pack_integration_returns_digests(self, seeded, tmp_path):
-        # Give the project a source the git_local adapter can actually
-        # collect from: a real throwaway git repo with one commit.
         from bin import catalog
 
         repo = tmp_path / "toy-repo"
@@ -373,7 +345,6 @@ class TestCapabilityGating:
             body = json.loads(result["content"][0]["text"])
             assert body["snapshot_digest"]
             assert body["pack_digests"]["creator"]
-            # Returned digests resolve as immutable resources (R1).
             pack = _payload(c.read(f"landscape://packs/{body['pack_digests']['creator']}"))
             assert pack["snapshot_digest"] == body["snapshot_digest"]
         finally:
@@ -388,10 +359,6 @@ class TestCapabilityGating:
             assert "unknown tool" in resp["error"]["message"]
         finally:
             c.close()
-
-
-# ── tools: signal_approval (T3) and inspect_run ──────────────────────────
-
 
 class TestSignalApproval:
     @pytest.mark.parametrize("caps", ["", "signal_approval"])
@@ -413,7 +380,6 @@ class TestSignalApproval:
         finally:
             c.close()
 
-
 class TestInspectRun:
     def test_not_implemented_stub(self, seeded):
         c = McpClient(capabilities="inspect_run")
@@ -424,10 +390,6 @@ class TestInspectRun:
             assert "not implemented" in resp["error"]["message"].lower()
         finally:
             c.close()
-
-
-# ── S1: no secrets anywhere ──────────────────────────────────────────────
-
 
 class TestSecretHygiene:
     def test_no_secret_values_in_any_response(self, seeded):
@@ -461,5 +423,5 @@ class TestSecretHygiene:
     def test_source_secret_field_is_redacted_by_name(self, client, seeded):
         client.initialize()
         body = _payload(client.read(f"landscape://sources/{seeded['source_id']}"))
-        assert body["config"]["api_key"].startswith("secret://")  # name-only ref
-        assert body["config"]["branch"] == "main"  # non-secret survives
+        assert body["config"]["api_key"].startswith("secret://")
+        assert body["config"]["branch"] == "main"

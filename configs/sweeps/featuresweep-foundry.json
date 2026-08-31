@@ -1,0 +1,29 @@
+{
+  "kind": "featuresweep",
+  "corpus": [
+    {
+      "adapter": "foundry_stories",
+      "config": {
+        "root": "/path/to/your/checkout/sites/packages/features/src/stories",
+        "surfaces": ["foundry", "landings"]
+      }
+    }
+  ],
+  "intake": { "max_candidates": 50, "rationale_required": true },
+  "panel": {
+    "lenses": [
+      { "name": "spec-honesty", "prompt_ref": "lens:spec-honesty", "burden": "refute" },
+      { "name": "fake-success", "prompt_ref": "lens:fake-success", "burden": "refute" }
+    ],
+    "human": { "rubric": "story-review", "judgement_kind": "single", "required": true },
+    "quorum": "all_lenses_and_human"
+  },
+  "rounds": {
+    "max": 2,
+    "batching": "required",
+    "convergence": "no_new_confirmed_findings",
+    "repair_max_cycles_per_finding": 1
+  },
+  "validation": { "mode": "rubric_only" },
+  "publish": { "gate": "human", "granularity": "report-only" }
+}

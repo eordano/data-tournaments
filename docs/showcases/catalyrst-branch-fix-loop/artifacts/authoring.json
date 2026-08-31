@@ -3,7 +3,7 @@
     "fix_branch_id": 1,
     "authoring_id": 1,
     "base_sha": "42b4717af8214597822c8795eb93364bd1cdccb7",
-    "head_sha": "REDACTED",
+    "head_sha": "99f367c6a8dd50a63599b854217b18b495af2d6a",
     "patch_digest": "b06e6c21b13e08bf4cad9f198ec7b4567597434045622b39dcc742051510485f",
     "backend": "fixture"
   },

@@ -1,6 +1,6 @@
 """Bugsweep-corpus adapter: campaign artifacts -> frozen EvidenceRefs.
 
-Ingests the hand-run campaign material (corpus/dcl-bugsweeps-2026-08/ shape)
+Ingests the hand-run campaign material (corpus/bugsweeps-2026-08/ shape)
 so past campaigns become citable landscape evidence:
 
 - campaign INDEX.md ledgers  -> one ref per finding row
@@ -32,10 +32,8 @@ from bin.landscape.evidence import EvidenceRef, SourceType, TrustTier
 
 MAX_EXCERPT_CHARS = 1600
 
-
 class BugsweepCorpusError(ValueError):
     """Malformed corpus config/content, or an unsafe path."""
-
 
 def _safe_read(root: Path, rel: str) -> str:
     """Read ``rel`` under ``root``; refuse paths/symlinks escaping root."""
@@ -51,11 +49,7 @@ def _safe_read(root: Path, rel: str) -> str:
         raise BugsweepCorpusError(f"{rel!r} is not a readable file in the corpus")
     return target.read_text(encoding="utf-8", errors="replace")
 
-
-# ── campaign INDEX.md ledgers ────────────────────────────────────────────
-
 _ROW_RE = re.compile(r"^\|\s*([a-z0-9][a-z0-9-]*)\s*\|(.+)\|\s*$")
-
 
 def parse_campaign_index(
     text: str,
@@ -98,11 +92,7 @@ def parse_campaign_index(
         )
     return refs
 
-
-# ── REVIEW-RULES.md rulesets ─────────────────────────────────────────────
-
 _RULE_RE = re.compile(r"^###\s+(\d+)\.\s+(.+)$")
-
 
 def parse_review_rules(
     text: str,
@@ -114,7 +104,7 @@ def parse_review_rules(
 ) -> list[EvidenceRef]:
     """One TIER2 ref per ``### N. <rule>`` heading, body attached."""
     refs: list[EvidenceRef] = []
-    current: Optional[list] = None  # [n, title, body_lines]
+    current: Optional[list] = None
 
     def flush() -> None:
         if current is None:
@@ -147,10 +137,6 @@ def parse_review_rules(
             f"no '### N.' rule headings found for ruleset {ruleset!r}"
         )
     return refs[:max_items]
-
-
-# ── adapter entrypoint ───────────────────────────────────────────────────
-
 
 def collect(
     config: dict, *, why: str, limits: Optional[dict] = None

@@ -23,6 +23,21 @@ worktree — never the main worktree, never a merged/aggregate tree:
    to validated/failed.
 5. ALWAYS removes the worktree (``git worktree remove --force``) in a
    finally block. Never merges anything.
+6. When the work order came out of a priority tournament (a ``standing``
+   is passed), appends the outcome as ranking evidence keyed to the
+   item's pair_keys — the return edge of
+   docs/design/priority-tournament.md. Inert by construction: it is a
+   labelled example for bin/optimize.py, and promotes nothing.
+
+   An unavailable return edge DEGRADES, it never aborts the validation.
+   A byed item legitimately holds no pair key (a bye is not a result and
+   awards none), so its beat outcome is recorded with
+   join_status='no-pair-keys' and a join_detail saying why — honest and
+   machine-readable — instead of the whole validation refusing to run.
+   What is still REFUSED is a claim of ranking evidence that is not real:
+   a pair key that is not a sha256 pair identity or that names no judged
+   pair in this database, a standing with no pool, or a branch with no
+   work order to key the outcome to.
 """
 from __future__ import annotations
 
@@ -36,14 +51,15 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from bin import fix_branches  # noqa: E402
-from bin.fix_branches import _git, _git_env  # noqa: E402
+from bin.fix_branches import _connect, _git, _git_env  # noqa: E402
+from bin.workorder import TournamentStanding  # noqa: E402
 
 _LINE_RE = {
     "RED": re.compile(r"^RED\s+(\d+)/(\d+)\s*$", re.MULTILINE),
@@ -51,10 +67,6 @@ _LINE_RE = {
     "GUARD": re.compile(r"^GUARD\s+(\d+)/(\d+)\s*$", re.MULTILINE),
 }
 
-# Well-known harness-defining files (wave-11 B): protected whenever they
-# exist at BASE. These resolve what the harness scripts actually run — a
-# branch editing Cargo.toml/conftest.py/... can redirect 'cargo test' or
-# 'pytest' to doctored code without ever touching the scripts themselves.
 DEFAULT_PROTECTED_GLOBS = [
     "Cargo.toml",
     "Cargo.lock",
@@ -72,17 +84,9 @@ DEFAULT_PROTECTED_GLOBS = [
     "yarn.lock",
 ]
 
-# Hard cap on the widened protected set. Exceeding it REFUSES validation
-# (honest error) rather than silently truncating protection.
 MAX_PROTECTED_PATHS = 200
 
-# 'cargo test --test <name>' style indirection inside a protected script:
-# the named target lives in a tests/ tree, not in the command tokens.
 _TEST_NAME_RE = re.compile(r"--test[\s=]+['\"]?([A-Za-z0-9_.-]+)")
-
-
-# ── Harness trust (wave-10 V2): the validation scripts are pinned to BASE ──
-
 
 def _normalize_rel(token: str) -> Optional[str]:
     """Normalize a command token to a worktree-relative path, or None when
@@ -91,12 +95,11 @@ def _normalize_rel(token: str) -> Optional[str]:
     if not token or token.startswith("-"):
         return None
     if token.startswith("/") or token.startswith("~"):
-        return None  # not worktree-relative
+        return None
     norm = posixpath.normpath(token)
     if norm.startswith("..") or norm in (".", ""):
         return None
     return norm
-
 
 def _exists_at(repo_path: str, sha: str, path: str) -> bool:
     proc = subprocess.run(
@@ -105,7 +108,6 @@ def _exists_at(repo_path: str, sha: str, path: str) -> bool:
         env=_git_env(),
     )
     return proc.returncode == 0
-
 
 def _default_protected(
     repo_path: str, base_sha: str, cmds: list[str]
@@ -129,7 +131,6 @@ def _default_protected(
                 protected.append(rel)
     return protected
 
-
 def _show_at_base(repo_path: str, base_sha: str, path: str) -> str:
     """The file's content AT BASE (git show base:path), decoded leniently.
     Empty string when unreadable — discovery is best-effort per file."""
@@ -142,14 +143,12 @@ def _show_at_base(repo_path: str, base_sha: str, path: str) -> str:
         return ""
     return proc.stdout.decode("utf-8", errors="replace")
 
-
 def _base_tree_paths(repo_path: str, base_sha: str) -> list[str]:
     """All paths in the BASE tree (git ls-tree -r base --name-only) — the
     only tree glob patterns are ever matched against. The candidate's head
     never influences discovery."""
     out = _git(repo_path, "ls-tree", "-r", base_sha, "--name-only")
     return out.splitlines()
-
 
 def _content_path_tokens(content: str):
     """Candidate worktree-relative path tokens inside a script's content:
@@ -164,7 +163,6 @@ def _content_path_tokens(content: str):
         rel = _normalize_rel(token)
         if rel is not None:
             yield rel
-
 
 def _discover_protected(
     repo_path: str,
@@ -194,20 +192,16 @@ def _discover_protected(
     for path in scripts:
         sources[path] = "script"
 
-    # One level of transitive scanning: paths the scripts themselves name.
     script_contents = {s: _show_at_base(repo_path, base_sha, s) for s in scripts}
     for content in script_contents.values():
         for rel in _content_path_tokens(content):
             if rel not in sources and _exists_at(repo_path, base_sha, rel):
                 sources[rel] = "transitive"
 
-    # Well-known harness-defining manifests existing at base.
     for name in DEFAULT_PROTECTED_GLOBS:
         if name not in sources and _exists_at(repo_path, base_sha, name):
             sources[name] = "manifest-glob"
 
-    # 'cargo test --test <name>' indirection: protect the tests/ trees the
-    # scripts reference, matched against the BASE tree listing only.
     test_names: list[str] = []
     for content in script_contents.values():
         test_names.extend(_TEST_NAME_RE.findall(content))
@@ -236,7 +230,6 @@ def _discover_protected(
         )
     return sorted(sources), sources
 
-
 def _tampered_paths(
     repo_path: str, base_sha: str, head_sha: str, protected: list[str]
 ) -> list[str]:
@@ -245,7 +238,6 @@ def _tampered_paths(
     out = _git(repo_path, "diff", "--name-only", f"{base_sha}..{head_sha}")
     changed = set(out.splitlines())
     return sorted(p for p in protected if p in changed)
-
 
 def _harness_digest(repo_path: str, base_sha: str, protected: list[str]) -> str:
     """sha256 over the protected files' contents AT BASE (git show
@@ -267,7 +259,6 @@ def _harness_digest(repo_path: str, base_sha: str, protected: list[str]) -> str:
         h.update(b"\0")
     return h.hexdigest()
 
-
 def _run_leg(cmd: str, cwd: Path) -> tuple[str, int]:
     """Run one leg via the shell in the worktree; return (combined output,
     exit code). Output is captured, never streamed."""
@@ -282,7 +273,6 @@ def _run_leg(cmd: str, cwd: Path) -> tuple[str, int]:
     out = proc.stdout + (("\n" + proc.stderr) if proc.stderr else "")
     return out, proc.returncode
 
-
 def _parse_counts(kind: str, output: str) -> Optional[tuple[int, int]]:
     """Parse the LAST 'KIND <a>/<b>' line from a leg's output, or None."""
     matches = _LINE_RE[kind].findall(output)
@@ -290,7 +280,6 @@ def _parse_counts(kind: str, output: str) -> Optional[tuple[int, int]]:
         return None
     a, b = matches[-1]
     return int(a), int(b)
-
 
 def _store_log(text: str) -> str:
     """Content-address the combined run log; return the sha256 digest."""
@@ -300,6 +289,365 @@ def _store_log(text: str) -> str:
     catalog.cas_write(digest, text)
     return digest
 
+_RANKING_EVIDENCE_DDL = """
+CREATE TABLE IF NOT EXISTS ranking_evidence (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  pool_id       TEXT    NOT NULL,
+  workorder_ref TEXT    NOT NULL,
+  fix_branch_id INTEGER NOT NULL REFERENCES fix_branch(id),
+  validation_id INTEGER NOT NULL REFERENCES fix_branch_validation(id),
+  tested_sha    TEXT    NOT NULL,
+  outcome       TEXT    NOT NULL CHECK (outcome IN ('passed','failed','refused')),
+  join_status   TEXT    NOT NULL DEFAULT 'joined'
+                CHECK (join_status IN ('joined','no-pair-keys')),
+  join_detail   TEXT    NOT NULL DEFAULT '',
+  points        INTEGER NOT NULL,
+  played        INTEGER NOT NULL,
+  rank          INTEGER NOT NULL,
+  rounds        INTEGER NOT NULL,
+  created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ranking_evidence_pool
+  ON ranking_evidence(pool_id);
+CREATE TRIGGER IF NOT EXISTS ranking_evidence_immutable
+  BEFORE UPDATE ON ranking_evidence
+  BEGIN SELECT RAISE(ABORT, 'ranking_evidence rows are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS ranking_evidence_no_delete
+  BEFORE DELETE ON ranking_evidence
+  BEGIN SELECT RAISE(ABORT, 'ranking_evidence rows are append-only'); END;
+
+CREATE TABLE IF NOT EXISTS ranking_evidence_pair (
+  evidence_id INTEGER NOT NULL REFERENCES ranking_evidence(id),
+  pair_key    TEXT    NOT NULL,
+  PRIMARY KEY (evidence_id, pair_key)
+);
+CREATE INDEX IF NOT EXISTS idx_ranking_evidence_pair_key
+  ON ranking_evidence_pair(pair_key);
+CREATE TRIGGER IF NOT EXISTS ranking_evidence_pair_immutable
+  BEFORE UPDATE ON ranking_evidence_pair
+  BEGIN SELECT RAISE(ABORT, 'ranking_evidence_pair rows are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS ranking_evidence_pair_no_delete
+  BEFORE DELETE ON ranking_evidence_pair
+  BEGIN SELECT RAISE(ABORT, 'ranking_evidence_pair rows are append-only'); END;
+"""
+
+JOIN_JOINED = "joined"
+JOIN_NO_PAIR_KEYS = "no-pair-keys"
+JOIN_STATUSES = (JOIN_JOINED, JOIN_NO_PAIR_KEYS)
+
+_PAIR_KEY_RE = re.compile(r"[0-9a-f]{64}")
+
+A_PAIR_KEY_IS_MATCHED_WHOLE_BECAUSE_A_TRAILING_NEWLINE_IS_NOT_A_DIGEST = (
+    "re.match with a '$' anchor accepts a trailing newline, so "
+    "'<64 hex>\\n' passed the shape check and landed in a table whose "
+    "UPDATE and DELETE triggers RAISE(ABORT) -- permanently, and joining "
+    "against nothing. fullmatch is the whole check."
+)
+
+_PAIR_KEY_SOURCES = (
+    ("pending_judgement", "SELECT 1 FROM pending_judgement WHERE pair_key=?"),
+    ("score", "SELECT 1 FROM score WHERE pair_key=?"),
+    ("work_dispatch_pair",
+     "SELECT 1 FROM work_dispatch_pair WHERE pair_key=?"),
+)
+
+SHAPE_IS_NOT_EXISTENCE_A_WELL_FORMED_KEY_STILL_HAS_TO_NAME_A_JUDGED_PAIR = (
+    "any 64 hex characters look exactly like a pair key, so a shape check "
+    "alone records evidence 'joined' to a comparison nobody ever made. The "
+    "key must appear where judged pairs are recorded: on the pending row or "
+    "score row of the judgement itself, or in the dispatch ledger's "
+    "work_dispatch_pair, which is where the pairs behind a dispatched "
+    "item's standing are written at claim time."
+)
+
+_MIGRATIONS = (
+    ("join_status",
+     "ALTER TABLE ranking_evidence ADD COLUMN join_status TEXT NOT NULL "
+     "DEFAULT 'joined' CHECK (join_status IN ('joined','no-pair-keys'))"),
+    ("join_detail",
+     "ALTER TABLE ranking_evidence ADD COLUMN join_detail TEXT NOT NULL "
+     "DEFAULT ''"),
+)
+
+def _ensure_schema(conn) -> None:
+    """Apply the ranking-evidence DDL, then add any column a DB created by
+    an older revision predates. Rows written before join_status existed
+    carried pair keys by construction (an empty set aborted the whole
+    validation back then), so 'joined' is the honest backfill default."""
+    conn.executescript(_RANKING_EVIDENCE_DDL)
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(ranking_evidence)")
+    }
+    for column, ddl in _MIGRATIONS:
+        if column not in columns:
+            conn.execute(ddl)
+
+def _coerce_standing(standing) -> TournamentStanding:
+    if isinstance(standing, TournamentStanding):
+        return standing
+    return TournamentStanding(**dict(standing))
+
+class ReturnEdge(NamedTuple):
+    """How a beat outcome will key back to the judgements that ranked the
+    item: the standing it entered implementation with, the work order it
+    belongs to, and whether the join is available at all."""
+
+    standing: TournamentStanding
+    workorder_ref: str
+    join_status: str
+    join_detail: str
+
+    @property
+    def joinable(self) -> bool:
+        return self.join_status == JOIN_JOINED
+
+def _unrecorded_pair_keys(conn, keys) -> list[str]:
+    """The keys that appear nowhere a judged pair is recorded."""
+    tables = {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    missing = []
+    for key in keys:
+        found = False
+        for table, sql in _PAIR_KEY_SOURCES:
+            if table in tables and conn.execute(sql, (key,)).fetchone():
+                found = True
+                break
+        if not found:
+            missing.append(key)
+    return missing
+
+def _check_pair_keys(standing: TournamentStanding, conn=None) -> None:
+    """REFUSE pair keys that are not real.
+
+    A pair key is ``sha256(item_a || item_b || rubric_id || rubric_version)``
+    over a comparison somebody actually made, so a key is refused when it is
+    not a 64-char lowercase hex digest AND when it is one that names no
+    judged pair in this database. Both are claims of evidence rather than
+    evidence. Holding NO pair key is a different thing entirely and is not
+    checked here — that degrades, see join_status.
+    """
+    bad = [key for key in standing.pair_keys if not _PAIR_KEY_RE.fullmatch(key)]
+    if bad:
+        raise ValueError(
+            f"pair key {bad[0]!r} is not a sha256 pair identity; ranking "
+            "evidence claiming a judged pair that cannot exist is refused "
+            "(an item holding no pair key at all degrades instead of "
+            f"refusing — see join_status). "
+            f"{A_PAIR_KEY_IS_MATCHED_WHOLE_BECAUSE_A_TRAILING_NEWLINE_IS_NOT_A_DIGEST}"
+        )
+    if conn is None:
+        with _connect() as own:
+            missing = _unrecorded_pair_keys(own, standing.pair_keys)
+    else:
+        missing = _unrecorded_pair_keys(conn, standing.pair_keys)
+    if missing:
+        raise ValueError(
+            f"pair key {missing[0]!r} names no judged pair in this database; "
+            "ranking evidence is refused rather than recorded as 'joined'. "
+            f"{SHAPE_IS_NOT_EXISTENCE_A_WELL_FORMED_KEY_STILL_HAS_TO_NAME_A_JUDGED_PAIR}"
+        )
+
+def _join_state(standing: TournamentStanding) -> tuple[str, str]:
+    """The join status of an outcome recorded against this standing, and
+    the honest reason when there is nothing to join to."""
+    if standing.pair_keys:
+        return JOIN_JOINED, ""
+    if standing.played:
+        return JOIN_NO_PAIR_KEYS, (
+            f"standing played {standing.played} match(es) and holds no pair "
+            "key: a bye is not a result and awards none, so this outcome "
+            "cannot be joined back to any judgement"
+        )
+    return JOIN_NO_PAIR_KEYS, (
+        "standing played no match: the item reached implementation without "
+        "a pairwise comparison, so this outcome cannot be joined back to "
+        "any judgement"
+    )
+
+def _check_return_edge(branch: dict, standing) -> ReturnEdge:
+    """Resolve the join back to the tournament BEFORE anything runs.
+
+    An UNAVAILABLE join degrades: a standing with no pair keys yields
+    join_status='no-pair-keys', and validation proceeds — a byed item is a
+    perfectly valid item, and losing its whole validation over a missing
+    evidence row was the bug this replaced.
+
+    A join that is WRONG still refuses, because a beat outcome keyed to a
+    pair nobody judged is worse than no evidence: a pair key that is
+    malformed OR that names no judged pair in this database, a standing
+    with no pool to scope the rubric it grades, or a branch with no work
+    order to name the item.
+    """
+    parsed = _coerce_standing(standing)
+    if not parsed.pool_id:
+        raise ValueError(
+            "ranking evidence needs standing.pool_id: the return edge is "
+            "scoped to the pool whose rubric it grades"
+        )
+    _check_pair_keys(parsed)
+    workorder_ref = (branch.get("workorder_ref") or "").strip()
+    if not workorder_ref:
+        raise ValueError(
+            f"fix_branch {branch['id']} has no workorder_ref; a tournament "
+            "item's beat outcome must be joinable back to its work order"
+        )
+    status, detail = _join_state(parsed)
+    return ReturnEdge(parsed, workorder_ref, status, detail)
+
+def record_ranking_evidence(
+    fix_branch_id: int,
+    *,
+    validation_id: int,
+    tested_sha: str,
+    outcome: str,
+    standing,
+    workorder_ref: str,
+) -> int:
+    """Append ONE beat outcome as ranking evidence, keyed to the pairs.
+
+    The row carries the standing the item entered implementation with; one
+    ranking_evidence_pair row per pair_key joins it back to the judgements
+    that produced that standing. Append-only, and inert: nothing here
+    promotes a rubric — bin/optimize.py's gate is unchanged and reads this
+    only as labelled examples.
+
+    join_status is DERIVED from the standing, never asserted by the
+    caller: 'joined' when the item holds pair keys, 'no-pair-keys' when it
+    does not, with join_detail carrying the reason in words. A byed item
+    still gets its row — the outcome is real, only the join is missing,
+    and saying so is what makes the gap machine-readable instead of
+    invisible.
+    """
+    parsed = _coerce_standing(standing)
+    if outcome not in ("passed", "failed", "refused"):
+        raise ValueError(
+            f"outcome {outcome!r} is not one of passed/failed/refused"
+        )
+    join_status, join_detail = _join_state(parsed)
+    with _connect() as conn:
+        _ensure_schema(conn)
+        _check_pair_keys(parsed, conn)
+        cur = conn.execute(
+            "INSERT INTO ranking_evidence(pool_id, workorder_ref, "
+            "fix_branch_id, validation_id, tested_sha, outcome, join_status, "
+            "join_detail, points, played, rank, rounds) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                parsed.pool_id,
+                workorder_ref,
+                fix_branch_id,
+                validation_id,
+                tested_sha,
+                outcome,
+                join_status,
+                join_detail,
+                parsed.points,
+                parsed.played,
+                parsed.rank,
+                parsed.rounds,
+            ),
+        )
+        evidence_id = cur.lastrowid
+        conn.executemany(
+            "INSERT OR IGNORE INTO ranking_evidence_pair(evidence_id, pair_key) "
+            "VALUES (?, ?)",
+            [(evidence_id, key) for key in parsed.pair_keys],
+        )
+        conn.commit()
+    return evidence_id
+
+def _evidence_dict(row: dict, pair_keys: list[str]) -> dict:
+    """One labelled example in the shape bin/optimize.py consumes: the
+    pair keys to join on, the verdict, the standing that verdict grades,
+    and the provenance (work order, branch, validation, tested SHA) to
+    join through. ``join_status``/``join_detail`` say in the row itself
+    whether the pair-key join exists — an example carrying no keys is
+    still a real outcome, just one no judgement can be blamed for."""
+    return {
+        "workorder_ref": row["workorder_ref"],
+        "standing": {
+            "points": row["points"],
+            "played": row["played"],
+            "rank": row["rank"],
+            "rounds": row["rounds"],
+            "pool_id": row["pool_id"],
+            "pair_keys": pair_keys,
+        },
+        "outcome": row["outcome"],
+        "pair_keys": pair_keys,
+        "pool_id": row["pool_id"],
+        "join_status": row["join_status"],
+        "join_detail": row["join_detail"],
+        "joinable": row["join_status"] == JOIN_JOINED,
+        "evidence_id": row["id"],
+        "validation_id": row["validation_id"],
+        "fix_branch_id": row["fix_branch_id"],
+        "tested_sha": row["tested_sha"],
+        "created_at": row["created_at"],
+    }
+
+def ranking_evidence(evidence_id: int) -> Optional[dict]:
+    """ONE recorded beat outcome as a labelled example, or None. This is
+    what ``validate`` hands back inline so a consumer never has to re-key
+    the outcome to the tournament by hand."""
+    with _connect() as conn:
+        _ensure_schema(conn)
+        row = conn.execute(
+            "SELECT * FROM ranking_evidence WHERE id=?", (evidence_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        pairs = [
+            r["pair_key"]
+            for r in conn.execute(
+                "SELECT pair_key FROM ranking_evidence_pair "
+                "WHERE evidence_id=? ORDER BY pair_key",
+                (evidence_id,),
+            ).fetchall()
+        ]
+    return _evidence_dict(dict(row), pairs)
+
+def ranking_evidence_for_pool(pool_id: str) -> list[dict]:
+    """The (item, standing, beat outcome) triples recorded for one pool,
+    ordered by rank then work order. Each triple carries the pair_keys the
+    item's standing was earned on, so a rubric revision can find exactly
+    which judgements a failed beat calls into question — and a
+    join_status saying so when there are none to find."""
+    with _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT * FROM ranking_evidence WHERE pool_id=? "
+            "ORDER BY rank, workorder_ref, id",
+            (pool_id,),
+        ).fetchall()
+        pairs: dict[int, list[str]] = {}
+        for row in conn.execute(
+            "SELECT p.evidence_id, p.pair_key FROM ranking_evidence_pair p "
+            "JOIN ranking_evidence e ON e.id = p.evidence_id "
+            "WHERE e.pool_id=? ORDER BY p.pair_key",
+            (pool_id,),
+        ).fetchall():
+            pairs.setdefault(row["evidence_id"], []).append(row["pair_key"])
+    return [
+        _evidence_dict(dict(row), pairs.get(row["id"], [])) for row in rows
+    ]
+
+def evidence_for_pair(pair_key: str) -> list[dict]:
+    """Every beat outcome recorded against one pair key — the lookup a
+    judgement uses to ask what happened to the items it compared."""
+    with _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT e.* FROM ranking_evidence e "
+            "JOIN ranking_evidence_pair p ON p.evidence_id = e.id "
+            "WHERE p.pair_key=? ORDER BY e.id",
+            (pair_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 def validate(
     fix_branch_id: int,
@@ -310,6 +658,7 @@ def validate(
     scratch_dir: Optional[str] = None,
     protected_paths: Optional[list[str]] = None,
     expected: Optional[dict[str, tuple[int, int]]] = None,
+    standing=None,
 ) -> dict:
     """Validate a fix branch at its CURRENT head in an isolated worktree.
 
@@ -355,19 +704,37 @@ def validate(
     totals is caught even when percentages look right. This is a generic
     line-convention check; full cargo-JSON test-report parsing is out of
     scope for this validator.
+
+    THE RETURN EDGE (docs/design/priority-tournament.md): when ``standing``
+    is given — a TournamentStanding, or a dict of one — the outcome is also
+    appended as ranking evidence keyed to the item's pair_keys, so a
+    ranking that sent a doomed item to the top is a labelled example rather
+    than a lost beat. The returned dict gains 'ranking_evidence_id',
+    'ranking_evidence' (the whole labelled example: pair keys, verdict,
+    standing and provenance) and 'ranking_evidence_join'.
+
+    An UNAVAILABLE join degrades and never aborts: an item with no pair
+    keys — a bye awards none — is still validated, and its evidence row
+    carries join_status='no-pair-keys' plus a join_detail saying why no
+    judgement can be joined to it. A join that is WRONG still raises
+    ValueError before anything runs: a pair key that is not a sha256 pair
+    identity or that names no judged pair in this database, a standing with
+    no pool_id, or a branch with no workorder_ref. The evidence is inert either way: no rubric is promoted
+    by it, and the promotion gate in bin/optimize.py is untouched.
     """
     branch = fix_branches.get_branch(fix_branch_id)
     repo_path = branch["repo_path"]
     head_sha = branch["head_sha"]
     base_sha = branch["base_sha"]
+    edge = None
+    if standing is not None:
+        edge = _check_return_edge(branch, standing)
 
     protected, protected_source = _discover_protected(
         repo_path, base_sha, [red_cmd, green_cmd, guard_cmd or ""],
         protected_paths,
     )
 
-    # REFUSE BEFORE RUNNING ANYTHING: a branch that touches the harness
-    # never gets its code executed.
     tampered = _tampered_paths(repo_path, base_sha, head_sha, protected)
     if tampered:
         log_text = (
@@ -386,8 +753,23 @@ def validate(
             green_cmd=green_cmd,
             log_digest=log_digest,
         )
+        evidence_id = None
+        if edge is not None:
+            evidence_id = record_ranking_evidence(
+                fix_branch_id,
+                validation_id=validation_id,
+                tested_sha=head_sha,
+                outcome="refused",
+                standing=edge.standing,
+                workorder_ref=edge.workorder_ref,
+            )
         return {
             "validation_id": validation_id,
+            "ranking_evidence_id": evidence_id,
+            "ranking_evidence": (
+                ranking_evidence(evidence_id) if evidence_id else None
+            ),
+            "ranking_evidence_join": edge.join_status if edge else None,
             "tested_sha": head_sha,
             "passed": False,
             "status": "failed",
@@ -411,12 +793,8 @@ def validate(
 
     _git(repo_path, "worktree", "add", "--detach", str(worktree), head_sha)
     try:
-        # The SHA actually checked out — the binding recorded in the row.
         tested_sha = _git(str(worktree), "rev-parse", "HEAD")
 
-        # Materialize the harness FROM BASE inside the worktree: even a
-        # branch whose tampering doesn't show in the diff runs the BASE
-        # scripts, never its own copies.
         if protected:
             _git(str(worktree), "checkout", base_sha, "--", *protected)
 
@@ -478,8 +856,23 @@ def validate(
             guard_total=guard[1],
             log_digest=log_digest,
         )
+        evidence_id = None
+        if edge is not None:
+            evidence_id = record_ranking_evidence(
+                fix_branch_id,
+                validation_id=validation_id,
+                tested_sha=tested_sha,
+                outcome="passed" if passed else "failed",
+                standing=edge.standing,
+                workorder_ref=edge.workorder_ref,
+            )
         return {
             "validation_id": validation_id,
+            "ranking_evidence_id": evidence_id,
+            "ranking_evidence": (
+                ranking_evidence(evidence_id) if evidence_id else None
+            ),
+            "ranking_evidence_join": edge.join_status if edge else None,
             "tested_sha": tested_sha,
             "passed": passed,
             "status": "validated" if passed else "failed",

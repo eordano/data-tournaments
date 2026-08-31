@@ -9,14 +9,20 @@ losing card was bad.
 
 Verdict projection table (see tests/test_feedback.py for the canonical spec):
 
-    a-clearly-better     → A: positive 1.0, B: weak 0.4
-    a-marginally-better  → A: positive 0.6, B: neutral 0.0
-    b-clearly-better     → A: weak     0.4, B: positive 1.0
-    b-marginally-better  → A: neutral  0.0, B: positive 0.6
-    tie-both-strong      → both positive 1.0
-    tie-both-weak        → both negative 1.0
-    incoherent           → both negative 0.7  (pair-level negative)
-    skip                 → both unknown  0.0  (no training signal)
+    a-wins-big  → A: positive 1.0, B: weak     0.4
+    a-wins      → A: positive 0.6, B: neutral  0.0
+    b-wins-big  → A: weak     0.4, B: positive 1.0
+    b-wins      → A: neutral  0.0, B: positive 0.6
+    tie         → both neutral 0.0  (an order that does not matter says
+                  nothing about either card's quality)
+    discard-a   → A: negative 1.0, B: unknown  0.0
+    discard-b   → A: unknown  0.0, B: negative 1.0
+    skip        → both unknown  0.0  (no training signal)
+
+A discard is per-side, so it labels ONLY the side it ejects: the survivor of
+a discarded pairing is `unknown`, never `weak`, because nothing was
+established about it. Same rule the swiss engine applies when it declines to
+record a result for it.
 
 reason_tags on the judgement may be side-specific:
     [{"side": "a"|"b"|"pair", "tag": "..."}]
@@ -25,32 +31,40 @@ A `"pair"` tag attaches to both sides.
 from __future__ import annotations
 from typing import TypedDict
 
-
 class CardFeedback(TypedDict):
-    quality: str  # "positive" | "neutral" | "weak" | "negative" | "unknown"
+    quality: str
     weight: float
     reason_tags: list[str]
     title: str
     body: str
     source_ref: str
 
-
 class PairFeedback(TypedDict):
     card_a: CardFeedback
     card_b: CardFeedback
 
-
 _PROJECTION: dict[str, tuple[tuple[str, float], tuple[str, float]]] = {
-    "a-clearly-better":    (("positive", 1.0), ("weak",     0.4)),
-    "a-marginally-better": (("positive", 0.6), ("neutral",  0.0)),
-    "b-clearly-better":    (("weak",     0.4), ("positive", 1.0)),
-    "b-marginally-better": (("neutral",  0.0), ("positive", 0.6)),
-    "tie-both-strong":     (("positive", 1.0), ("positive", 1.0)),
-    "tie-both-weak":       (("negative", 1.0), ("negative", 1.0)),
-    "incoherent":          (("negative", 0.7), ("negative", 0.7)),
-    "skip":                (("unknown",  0.0), ("unknown",  0.0)),
+    "a-wins-big": (("positive", 1.0), ("weak",     0.4)),
+    "a-wins":     (("positive", 0.6), ("neutral",  0.0)),
+    "b-wins-big": (("weak",     0.4), ("positive", 1.0)),
+    "b-wins":     (("neutral",  0.0), ("positive", 0.6)),
+    "tie":        (("neutral",  0.0), ("neutral",  0.0)),
+    "discard-a":  (("negative", 1.0), ("unknown",  0.0)),
+    "discard-b":  (("unknown",  0.0), ("negative", 1.0)),
+    "skip":       (("unknown",  0.0), ("unknown",  0.0)),
 }
 
+A_DISCARD_LABELS_ONLY_THE_SIDE_IT_EJECTS_THE_SURVIVOR_STAYS_UNKNOWN = (
+    "projecting a discard onto both cards is the generator-feedback form of "
+    "the defect the per-side vocabulary exists to fix: a malformed A would "
+    "teach the generator that a perfectly good B was bad too."
+)
+assert _PROJECTION["discard-a"][1][0] == "unknown", (
+    A_DISCARD_LABELS_ONLY_THE_SIDE_IT_EJECTS_THE_SURVIVOR_STAYS_UNKNOWN
+)
+assert _PROJECTION["discard-b"][0][0] == "unknown", (
+    A_DISCARD_LABELS_ONLY_THE_SIDE_IT_EJECTS_THE_SURVIVOR_STAYS_UNKNOWN
+)
 
 def derive_card_feedback(judgement: dict) -> PairFeedback:
     """Project a pair verdict into per-card quality labels."""
@@ -66,7 +80,6 @@ def derive_card_feedback(judgement: dict) -> PairFeedback:
         "card_b": _build_card_feedback(judgement.get("card_b") or {}, b_qual, b_w, b_tags),
     }
 
-
 def _build_card_feedback(card: dict, quality: str, weight: float, tags: list[str]) -> CardFeedback:
     return {
         "quality": quality,
@@ -76,7 +89,6 @@ def _build_card_feedback(card: dict, quality: str, weight: float, tags: list[str
         "body": card.get("body", ""),
         "source_ref": card.get("source_ref", ""),
     }
-
 
 def _split_tags(reason_tags: list[dict]) -> tuple[list[str], list[str]]:
     a, b = [], []
@@ -93,14 +105,6 @@ def _split_tags(reason_tags: list[dict]) -> tuple[list[str], list[str]]:
             a.append(tag)
             b.append(tag)
     return a, b
-
-
-# ─────────────────────────────────────────────────────────────────────────
-# DB-aggregation layer
-#
-# list_card_feedback_for_domain reads the fabric DB, finds scored pairs for a
-# given domain, projects each pair via derive_card_feedback(), and emits a
-# flat list of per-card feedback rows for generator-prompt optimization.
 
 def list_card_feedback_for_domain(domain_name: str, *, min_weight: float = 0.0) -> list[dict]:
     import json

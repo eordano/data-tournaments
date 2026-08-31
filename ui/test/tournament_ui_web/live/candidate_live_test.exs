@@ -16,7 +16,10 @@ defmodule TournamentUiWeb.CandidateLiveTest do
 
   setup do
     previous_home = System.get_env("DATA_TOURNAMENTS_HOME")
-    home = "/tmp/dt-candidate-#{System.unique_integer([:positive])}"
+
+    home =
+      "/tmp/dt-candidate-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 

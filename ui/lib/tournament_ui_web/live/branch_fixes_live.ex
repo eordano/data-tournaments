@@ -264,6 +264,7 @@ defmodule TournamentUiWeb.BranchFixesLive do
     ~H"""
     <.workspace_page
       current={:branch_fixes}
+      flash={@flash}
       title={(@branch && @branch.branch_name) || "Branch ##{@branch_id}"}
       subtitle="Fix branch: validation evidence and review decision."
     >
@@ -736,6 +737,7 @@ defmodule TournamentUiWeb.BranchFixesLive do
     ~H"""
     <.workspace_page
       current={:branch_fixes}
+      flash={@flash}
       title="Branch fixes"
       subtitle="Automated fix branches: validation evidence and review decisions."
     >

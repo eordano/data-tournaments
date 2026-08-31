@@ -7,6 +7,13 @@ Responsibilities:
      $DATA_TOURNAMENTS_HOME/judgements.db and seeds the
      `code-style-tournament` rubric on first run.
   2. Pending-queue helpers (`enqueue_for_match`, `list_pending`).
+     There is ONE pair rubric, DEFAULT_TEMPLATE_NAME (pair-wheel-v2), and
+     it carries the eight-verdict vocabulary. The card-prioritizer and
+     pair-wheel-v1 rubrics are gone; see VOCABULARY_RESET_NOTICE for what
+     that does to a database holding their judgements.
+     The no-rematch reuse gate is scoped by rater type: a machine verdict
+     never satisfies a human queue, a human verdict satisfies a machine
+     one.
   3. Score writer (`write_judgement`) — writes 2 Score rows per
      judgement, tagged with a shared rating_id UUID. Used by both the
      LLM-judge worker and the LiveView UI (via a JSON-RPC bridge or
@@ -40,80 +47,29 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
-
-# Direct execution (``python bin/judgement.py``) puts only ``bin/`` on
-# sys.path, which breaks later ``from bin import ...`` imports. Keep the CLI
-# and module entry points equivalent.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from bin import llm_config as _llm_config  # noqa: E402  (needs _REPO_ROOT on sys.path)
 from bin.env_loader import load_dotenv as _load_dotenv  # noqa: E402
+from bin.swiss import DISCARD_VERDICTS  # noqa: E402  (the engine owns the vocabulary)
+from bin.swiss import known_verdicts as _engine_scored_verdicts  # noqa: E402
+from bin.swiss import pair_key  # noqa: E402  (one definition, shared with the engine)
+from bin.swiss import (  # noqa: E402
+    EVERY_ENQUEUABLE_RUBRIC_VERDICT_MUST_SCORE_OR_THE_ENGINE_SILENTLY_READS_IT_AS_SKIP,
+    A_DISCARD_EJECTS_THE_NAMED_SIDE_ONLY_NEVER_THE_ITEM_BESIDE_IT,
+)
 
-
-# ── .env loader ─────────────────────────────────────────────────────────
-# Shared loader lives in bin/env_loader.py; every CLI entry point calls it
-# explicitly. judgement keeps loading on import for backward compatibility
-# (its module import has always implied env setup).
 _load_dotenv()
 
-# ── Paths ────────────────────────────────────────────────────────────────
 DATA_HOME = Path(os.environ.get("DATA_TOURNAMENTS_HOME", "/tmp/data-tournaments"))
 DB_PATH = DATA_HOME / "judgements.db"
 SCHEMA_PATH = Path(__file__).parent / "judgement_schema.sql"
 
-# ── Seed rubric: card-prioritizer-v0 ────────────────────────────────────
-# Domain-neutral "given two cards, decide which is more worth surfacing."
-# Specific domains (code findings, memory extraction, actionables, …)
-# share this rubric and select their judge prompt by Langfuse Prompt name.
-SEED_TEMPLATE_NAME = "card-prioritizer-v0"
-SEED_TEMPLATE_VERSION = 1
-SEED_LANGFUSE_PROMPT_NAME = "judge-instructions"
-SEED_TEMPLATE_DEFINITION = {
-    "verdict_enum": [
-        "a-clearly-better",
-        "a-marginally-better",
-        "tie-both-strong",
-        "tie-both-weak",
-        "b-marginally-better",
-        "b-clearly-better",
-        "incoherent",
-        "skip",
-    ],
-    "confidence_enum": ["low", "mid", "high"],
-    "rationale_required": False,
-    "description": (
-        "Pick the card more worth surfacing to the user. Domain-specific "
-        "guidance (code-finding vs memory vs actionable, etc.) is selected "
-        "via Langfuse Prompt name."
-    ),
-}
-
-SEED_JUDGE_INSTRUCTIONS = (
-    "You are a triage judge in a card-elimination tournament. Each match "
-    "shows you two cards (A and B) drawn from the same corpus. Your job is "
-    "to pick the one more worth surfacing to a human user.\n\n"
-    "Use these criteria, weighted in this order:\n"
-    "  1. Specificity — concrete > vague. A card pointing at a real file "
-    "and line beats a generic platitude.\n"
-    "  2. Novelty — surprising > obvious. A finding the user couldn't have "
-    "guessed wins over restating the well-known.\n"
-    "  3. Actionability — leads to a clear next step > leaves the user "
-    "shrugging.\n"
-    "  4. Risk/impact — flags a real problem > nice-to-have.\n\n"
-    "Verdicts:\n"
-    "  - a-clearly-better / a-marginally-better — card A wins\n"
-    "  - tie-both-strong — both deserve to be surfaced; pick A by convention\n"
-    "  - tie-both-weak — neither is great; pick A by convention\n"
-    "  - b-marginally-better / b-clearly-better — card B wins\n"
-    "  - incoherent — one or both cards are malformed (missing title/body, "
-    "off-topic, contradictory)\n"
-    "  - skip — you genuinely cannot judge (insufficient context)\n\n"
-    "Confidence: how sure you are. Default 'mid'."
-)
+DEFAULT_JUDGE_PROMPT_NAME = "judge-instructions"
 
 SEED_DOMAIN_BUILDER_INSTRUCTIONS = (
     "You design new card-prioritization domains. Given a one-line "
@@ -135,28 +91,19 @@ SEED_DOMAIN_BUILDER_INSTRUCTIONS = (
     "the one more worth surfacing. Be explicit about what 'more worth "
     "surfacing' means in this specific domain (e.g. memory-extraction "
     "favors durable + generally-applicable; inbox-actionables favors "
-    "time-sensitive + blocks-others). Reference the same verdict enum "
-    "the seed judge uses (a-clearly-better, a-marginally-better, "
-    "tie-both-strong, tie-both-weak, b-marginally-better, "
-    "b-clearly-better, incoherent, skip).\n\n"
+    "time-sensitive + blocks-others). Reference the same verdict enum the "
+    "judge uses (discard-a, discard-b, a-wins-big, a-wins, tie, b-wins, "
+    "b-wins-big, skip), and say what makes a card in this domain worth "
+    "discarding outright rather than merely losing.\n\n"
     "Both prompts should be stand-alone — they will be saved as Langfuse "
     "Prompts and used directly. Don't reference other prompts or external "
     "context the runtime won't have."
 )
 SEED_DOMAIN_BUILDER_PROMPT_NAME = "domain-builder"
 
-# ── output_definition v2 (docs/design/judgement-wheel-v2.md) ────────────
-# Template-JSON only — no schema change. New keys:
-#   judgement_kind: 'pair' | 'single'          (absent => 'pair')
-#   subjects: ['idea']|['execution']|both      (absent => ['execution'])
-#   wheel: {position: verdict}                 (positions n/ne/e/se/s/sw/w/nw;
-#                                               every verdict must be in
-#                                               verdict_enum; validated at
-#                                               template registration)
 WHEEL_POSITIONS = ("n", "ne", "e", "se", "s", "sw", "w", "nw")
 JUDGEMENT_KINDS = ("pair", "single")
 JUDGEMENT_SUBJECTS = ("idea", "execution")
-
 
 def normalize_output_definition(outdef: dict) -> dict:
     """Return the v2 shape of an output_definition with defaults applied.
@@ -172,7 +119,6 @@ def normalize_output_definition(outdef: dict) -> dict:
     out["subjects"] = list(out.get("subjects") or ["execution"])
     out["wheel"] = dict(out.get("wheel") or {})
     return out
-
 
 def validate_output_definition(outdef: dict) -> dict:
     """Validate an output_definition at template registration time.
@@ -208,7 +154,6 @@ def validate_output_definition(outdef: dict) -> dict:
             )
     return norm
 
-
 def register_template(
     *,
     name: str,
@@ -240,88 +185,155 @@ def register_template(
         conn.commit()
     return tpl_id
 
+PAIR_WHEEL_TEMPLATE_NAME = "pair-wheel-v2"
+PAIR_WHEEL_TEMPLATE_VERSION = 1
+PAIR_WHEEL_PROMPT_NAME = "judge-instructions:pair-wheel-v2"
 
-# ── Wheel seed templates (wave-12): pair-wheel-v1 + the two singles ─────
-# Registered alongside card-prioritizer-v0, which stays untouched forever.
-PAIR_WHEEL_TEMPLATE_NAME = "pair-wheel-v1"
-PAIR_WHEEL_PROMPT_NAME = "judge-instructions:pair-wheel-v1"
+A_VOCABULARY_CHANGE_RENAMES_THE_RUBRIC_IT_NEVER_BUMPS_THE_VERSION = (
+    "pair-wheel-v2 is a NEW rubric at version 1, not pair-wheel-v1 at version "
+    "2. The verdict vocabulary is entirely different, and a name that means "
+    "two different things depending on the version is discoverable only by "
+    "reading eval_template. The rubric name is hashed into pair_key, so the "
+    "rename invalidates every stored key -- which is the point, and what "
+    "VOCABULARY_RESET_NOTICE announces."
+)
 PAIR_WHEEL_TEMPLATE_DEFINITION = {
     "judgement_kind": "pair",
     "subjects": ["execution"],
     "verdict_enum": [
-        "tie-both-important",
-        "b-slightly-better",
-        "b-strongly-better",
-        "b-lean-both-invalid",
-        "neither-good",
-        "a-lean-both-invalid",
-        "a-strongly-better",
-        "a-slightly-better",
-        "incoherent",
+        "discard-a",
+        "discard-b",
+        "a-wins-big",
+        "a-wins",
+        "tie",
+        "b-wins",
+        "b-wins-big",
         "skip",
     ],
     "confidence_enum": ["low", "mid", "high"],
     "wheel": {
-        "n": "tie-both-important",
-        "ne": "b-slightly-better",
-        "e": "b-strongly-better",
-        "se": "b-lean-both-invalid",
-        "s": "neither-good",
-        "sw": "a-lean-both-invalid",
-        "w": "a-strongly-better",
-        "nw": "a-slightly-better",
+        "n": "tie",
+        "ne": "b-wins",
+        "e": "b-wins-big",
+        "se": "discard-b",
+        "sw": "discard-a",
+        "w": "a-wins-big",
+        "nw": "a-wins",
     },
     "rationale_required": False,
     "description": (
-        "Semantic-wheel pair judgement: vertical axis is joint quality "
-        "(up: both matter, down: both bad), horizontal is preference "
-        "direction (left A, right B), diagonals mix them."
+        "Semantic-wheel pair judgement: seven wheel verdicts plus an "
+        "off-wheel skip. The horizontal axis names the side the verdict is "
+        "about (left A, right B); the vertical axis says what happens to it "
+        "(up: surface it ahead of the other, down: eject it from the pool). "
+        "South is empty on purpose -- there is no 'both are bad' verdict. "
+        "Skip is deliberately off the wheel: it establishes nothing and "
+        "awards no rank."
     ),
 }
 
+SKIP_IS_ON_THE_RUBRIC_BUT_OFF_THE_WHEEL_BECAUSE_IT_ESTABLISHES_NOTHING = (
+    "a rater who genuinely cannot call a pairing needs somewhere to say so, "
+    "or the honest answer becomes a guessed 'tie' that scores points. skip is "
+    "therefore judge-facing, but it sits with the operational verdicts rather "
+    "than on the wheel, and bin/swiss.py routes it through no_result(): no "
+    "result row, no played count, no rank."
+)
+assert "skip" in PAIR_WHEEL_TEMPLATE_DEFINITION["verdict_enum"], (
+    SKIP_IS_ON_THE_RUBRIC_BUT_OFF_THE_WHEEL_BECAUSE_IT_ESTABLISHES_NOTHING
+)
+assert "skip" not in PAIR_WHEEL_TEMPLATE_DEFINITION["wheel"].values(), (
+    SKIP_IS_ON_THE_RUBRIC_BUT_OFF_THE_WHEEL_BECAUSE_IT_ESTABLISHES_NOTHING
+)
+
+THERE_IS_DELIBERATELY_NO_BOTH_ARE_BAD_VERDICT_SO_SOUTH_STAYS_EMPTY = (
+    "the south position used to hold neither-good, which ejected both cards "
+    "at once. A judge facing two bad items now discards ONE, and the other "
+    "returns to the pool to be judged on its own next time."
+)
+assert "s" not in PAIR_WHEEL_TEMPLATE_DEFINITION["wheel"], (
+    THERE_IS_DELIBERATELY_NO_BOTH_ARE_BAD_VERDICT_SO_SOUTH_STAYS_EMPTY
+)
+
+_PAIR_WHEEL_UNSCORED_VERDICTS = sorted(
+    set(PAIR_WHEEL_TEMPLATE_DEFINITION["verdict_enum"]) - _engine_scored_verdicts()
+)
+assert not _PAIR_WHEEL_UNSCORED_VERDICTS, (
+    f"{PAIR_WHEEL_TEMPLATE_NAME} can emit {_PAIR_WHEEL_UNSCORED_VERDICTS}, "
+    f"which bin/swiss.py does not score. "
+    f"{EVERY_ENQUEUABLE_RUBRIC_VERDICT_MUST_SCORE_OR_THE_ENGINE_SILENTLY_READS_IT_AS_SKIP}"
+)
+
+_PAIR_WHEEL_MISSING_DISCARDS = sorted(
+    DISCARD_VERDICTS - set(PAIR_WHEEL_TEMPLATE_DEFINITION["verdict_enum"])
+)
+assert not _PAIR_WHEEL_MISSING_DISCARDS, (
+    "the rubric the judge is handed must offer every verdict the swiss "
+    "engine treats as a discard, or discard stays unreachable on the page; "
+    f"missing: {_PAIR_WHEEL_MISSING_DISCARDS}. "
+    f"{A_DISCARD_EJECTS_THE_NAMED_SIDE_ONLY_NEVER_THE_ITEM_BESIDE_IT}"
+)
+
 PAIR_WHEEL_JUDGE_INSTRUCTIONS = (
-    "You compare two artifacts (A left, B right) on a semantic wheel. The "
-    "verdict is relational: geometry signifies. Vertical axis = joint "
-    "quality (up: both matter, down: both bad); horizontal axis = "
-    "preference direction (left favors A, right favors B); diagonals mix "
-    "them.\n\n"
-    "Verdicts:\n"
-    "  - tie-both-important — a tie worth flagging: both deserve to survive\n"
-    "  - a-slightly-better / b-slightly-better — slight preference, both acceptable\n"
-    "  - a-strongly-better / b-strongly-better — strong preference\n"
-    "  - a-lean-both-invalid / b-lean-both-invalid — the pair is weak or "
-    "invalid, but one side is closer to salvageable\n"
-    "  - neither-good — reject both\n"
-    "  - incoherent — one or both artifacts are malformed (off-wheel)\n"
-    "  - skip — you genuinely cannot judge (off-wheel)\n\n"
+    "You compare two artifacts (A left, B right) and say which is more "
+    "worth surfacing to a human. The verdict is relational: you are never "
+    "asked how good either one is on its own.\n\n"
+    "Use these criteria, weighted in this order:\n"
+    "  1. Specificity - concrete > vague. An item pointing at a real file "
+    "and line beats a generic platitude.\n"
+    "  2. Novelty - surprising > obvious.\n"
+    "  3. Actionability - leads to a clear next step > leaves the reader "
+    "shrugging.\n"
+    "  4. Risk/impact - flags a real problem > nice-to-have.\n\n"
+    "Comparison verdicts:\n"
+    "  - a-wins-big - A is much more worth surfacing\n"
+    "  - a-wins - A is more worth surfacing\n"
+    "  - tie - the order between them does not matter for scheduling\n"
+    "  - b-wins - B is more worth surfacing\n"
+    "  - b-wins-big - B is much more worth surfacing\n\n"
+    "Discard verdicts eject ONE side, permanently:\n"
+    "  - discard-a - A should never have been generated; it leaves the pool\n"
+    "  - discard-b - B should never have been generated; it leaves the pool\n\n"
+    "A discard names ONE item and touches only that item. The other one "
+    "stays in the pool with nothing recorded about it and is judged again "
+    "next round on its own merits - so never discard a good item because "
+    "the item beside it is malformed. If BOTH are bad, discard the worse "
+    "one; the other comes back and you can discard it then. A discard is "
+    "not a loss and not a score of zero: zero is a real position, held by "
+    "items that lost honestly.\n\n"
+    "One operational verdict, off the wheel:\n"
+    "  - skip - you genuinely cannot judge this pairing\n\n"
+    "A skip establishes NOTHING. It awards no rank, no points and no played "
+    "match to either side; both come back in a later round. Use it only when "
+    "the context is missing, never as a soft 'tie' - if you can read both "
+    "items and the order between them does not matter, the honest answer is "
+    "'tie'.\n\n"
     "Confidence: how sure you are. Default 'mid'."
 )
 
-# Same wheel geometry, IDEA subject: compares two PROPOSALS (is this worth
-# pursuing?) rather than two executed artifacts. Needed so pipelines can
-# declare idea-compare stages without misusing the execution rubric
-# (stage subject must be among the rubric's subjects — fail-closed).
-PAIR_IDEA_WHEEL_TEMPLATE_NAME = "pair-idea-wheel-v1"
-PAIR_IDEA_WHEEL_PROMPT_NAME = "judge-instructions:pair-idea-wheel-v1"
+PAIR_IDEA_WHEEL_TEMPLATE_NAME = "pair-idea-wheel-v2"
+PAIR_IDEA_WHEEL_TEMPLATE_VERSION = 1
+PAIR_IDEA_WHEEL_PROMPT_NAME = "judge-instructions:pair-idea-wheel-v2"
 PAIR_IDEA_WHEEL_TEMPLATE_DEFINITION = {
     **PAIR_WHEEL_TEMPLATE_DEFINITION,
     "subjects": ["idea"],
     "description": (
-        "Semantic-wheel pair judgement over IDEAS (proposals/work orders): "
-        "same geometry as pair-wheel-v1, but the question is which idea is "
-        "more worth pursuing, not which execution is better."
+        "Pair judgement over IDEAS (proposals/work orders): "
+        "same geometry and same vocabulary as pair-wheel-v2, but the "
+        "question is which idea is more worth pursuing, not which execution "
+        "is better."
     ),
 }
 
 PAIR_IDEA_WHEEL_JUDGE_INSTRUCTIONS = (
-    "You compare two PROPOSALS (A left, B right) on a semantic wheel — "
-    "judge the IDEA (worth pursuing?), not any execution. Geometry "
-    "signifies: vertical = joint quality (up: both matter, down: both "
-    "bad); horizontal = preference (left A, right B); diagonals mix "
-    "them.\n\n"
-    "Verdicts: as pair-wheel-v1 (tie-both-important, a/b-slightly-better, "
-    "a/b-strongly-better, a/b-lean-both-invalid, neither-good; incoherent "
-    "and skip off-wheel).\n\n"
+    "You compare two PROPOSALS (A left, B right) - judge the IDEA (worth "
+    "pursuing?), not any execution.\n\n"
+    "Verdicts, exactly as pair-wheel-v2: a-wins-big, a-wins, tie, b-wins, "
+    "b-wins-big for the comparison; discard-a and discard-b to eject ONE "
+    "side permanently; skip when you genuinely cannot judge. A discard names "
+    "one item and touches only that item - the other returns to the pool and "
+    "is judged again on its own merits. A skip establishes nothing about "
+    "either side and awards no rank.\n\n"
     "Confidence: how sure you are. Default 'mid'."
 )
 
@@ -403,20 +415,17 @@ SINGLE_EXECUTION_JUDGE_INSTRUCTIONS = (
     "Confidence: how sure you are. Default 'mid'."
 )
 
-# (name, version, definition, prompt_name, instructions) — seeded by init_db
-# the same way the v0 seed works: idempotent, version 1, prompt push is
-# text-equality idempotent.
 WHEEL_SEED_TEMPLATES = (
     (
         PAIR_WHEEL_TEMPLATE_NAME,
-        1,
+        PAIR_WHEEL_TEMPLATE_VERSION,
         PAIR_WHEEL_TEMPLATE_DEFINITION,
         PAIR_WHEEL_PROMPT_NAME,
         PAIR_WHEEL_JUDGE_INSTRUCTIONS,
     ),
     (
         PAIR_IDEA_WHEEL_TEMPLATE_NAME,
-        1,
+        PAIR_IDEA_WHEEL_TEMPLATE_VERSION,
         PAIR_IDEA_WHEEL_TEMPLATE_DEFINITION,
         PAIR_IDEA_WHEEL_PROMPT_NAME,
         PAIR_IDEA_WHEEL_JUDGE_INSTRUCTIONS,
@@ -437,140 +446,211 @@ WHEEL_SEED_TEMPLATES = (
     ),
 )
 
-# Re-exported from bin.llm_config (single source of truth for the panel).
+DEFAULT_TEMPLATE_NAME = PAIR_WHEEL_TEMPLATE_NAME
+
+VOCABULARY_RESET = "pair-wheel-v2-vocabulary-reset"
+
+RETIRED_BY_THE_VOCABULARY_RESET = (
+    ("card-prioritizer-v0", None),
+    ("card-prioritizer-v1", None),
+    ("pair-wheel-v1", None),
+    ("pair-idea-wheel-v1", None),
+)
+
+VOCABULARY_RESET_NOTICE = (
+    "{reset}: {ratings} judgement(s) in {db} were made under a rubric this "
+    "reset retired ({rubrics}). card-prioritizer-v0, card-prioritizer-v1, "
+    "pair-wheel-v1 and pair-idea-wheel-v1 are DELETED; the pair rubrics are "
+    "now {pair_rubric} and {idea_rubric}, both at version {version}, and they "
+    "carry a different verdict vocabulary. Every pair_key stored before the "
+    "reset -- which hashes the rubric NAME and version -- no longer joins. "
+    "Those pairs will be asked again from scratch, and NOTHING is "
+    "backfilled. This is a deliberate abandonment of the old corpus, not "
+    "data loss: the old rows are still on disk and still mean exactly what "
+    "they meant under the vocabulary they were judged with."
+)
+
+THE_RESET_NOTICE_NAMES_THE_RUBRIC_THE_OPERATOR_WILL_ACTUALLY_FIND_ON_DISK = (
+    "an abandonment notice that names a rubric nobody seeded sends the "
+    "operator looking for rows that do not exist, so the notice interpolates "
+    "the registered constants instead of spelling the new names out."
+)
+assert "{pair_rubric}" in VOCABULARY_RESET_NOTICE, (
+    THE_RESET_NOTICE_NAMES_THE_RUBRIC_THE_OPERATOR_WILL_ACTUALLY_FIND_ON_DISK
+)
+
 FRONTIER_OPENROUTER_MODELS = _llm_config.FRONTIER_OPENROUTER_MODELS
 
+DEFAULT_JUDGE_PANEL_MODELS = FRONTIER_OPENROUTER_MODELS[:1]
+
+ONE_MACHINE_OPINION_IS_ENOUGH_TO_DISAGREE_WITH_A_HUMAN = (
+    "the machine panel exists to produce human-versus-machine disagreement, "
+    "and one machine opinion produces it. Three fanned every enqueue out to "
+    "1 human + 3 machine rows -- roughly 288 machine judgements for a "
+    "33-item campaign -- buying a second and third opinion nothing reads. "
+    "Widen it by taking a longer slice of FRONTIER_OPENROUTER_MODELS the day "
+    "something consumes the spread; the sync below archives whatever falls "
+    "outside the slice, so narrowing and widening are the same one-line edit."
+)
 
 def _openrouter_config(model: str) -> dict:
     return _llm_config.judge_config(model).as_dict()
 
-
 DEFAULT_LLM_CONFIG = _openrouter_config(FRONTIER_OPENROUTER_MODELS[0])
 
-
-# ── Connection helper ───────────────────────────────────────────────────
 def _connect(readonly: bool = False) -> sqlite3.Connection:
     DATA_HOME.mkdir(parents=True, exist_ok=True)
     if readonly:
-        # SQLite URI mode for true read-only.
         uri = f"file:{DB_PATH}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
     else:
         conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    # ADR 0001 §2 concurrency hygiene: wait instead of failing SQLITE_BUSY
-    # when the other runtime holds a write transaction.
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
-
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-
-# ── Schema bootstrap ────────────────────────────────────────────────────
 def init_db() -> None:
-    """Create the fabric DB and seed the default rubric. Idempotent.
+    """Create the fabric DB and seed the ONE pair rubric. Idempotent.
 
-    Side effect: pushes the seed judge instructions to Langfuse Prompts
-    (as `judge-instructions:production` v1) on first run. Re-runs are no-ops
-    on both the SQLite seed and the Langfuse push (push is text-equality
-    idempotent — see bin/prompts.push)."""
+    Side effects on first run: pushes the judge instructions to Langfuse
+    Prompts (text-equality idempotent -- see bin/prompts.push), and, on a
+    database that already holds judgements made under a retired rubric,
+    prints VOCABULARY_RESET_NOTICE to stderr. That notice is the loud
+    part of the abandonment: nothing is migrated and nothing is backfilled.
+    """
     DATA_HOME.mkdir(parents=True, exist_ok=True)
     schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
     with _connect() as conn:
         conn.executescript(schema_sql)
         _migrate_pending_judgement(conn)
-        # Optimizer runs share the fabric DB; ensure its table too.
         from bin import optimizer_runs as _optimizer_runs
         _optimizer_runs.init()
-        existing = conn.execute(
-            "SELECT id FROM eval_template WHERE name=? AND version=?",
-            (SEED_TEMPLATE_NAME, SEED_TEMPLATE_VERSION),
-        ).fetchone()
-        if existing is not None:
-            _sync_default_llm_configs(conn, existing["id"])
-            _seed_wheel_templates(conn)
-            return
-        from bin import prompts as _prompts
-        _prompts.push(
-            SEED_LANGFUSE_PROMPT_NAME,
-            SEED_JUDGE_INSTRUCTIONS,
-            labels=["production"],
-        )
-        _prompts.push(
-            SEED_DOMAIN_BUILDER_PROMPT_NAME,
-            SEED_DOMAIN_BUILDER_INSTRUCTIONS,
-            labels=["production"],
-        )
-        tpl_id = conn.execute(
-            "INSERT INTO eval_template(name, version, output_definition, "
-            "                          langfuse_prompt_name) "
-            "VALUES (?, ?, ?, ?)",
-            (
-                SEED_TEMPLATE_NAME,
-                SEED_TEMPLATE_VERSION,
-                json.dumps(SEED_TEMPLATE_DEFINITION),
-                SEED_LANGFUSE_PROMPT_NAME,
-            ),
-        ).lastrowid
-        for model in FRONTIER_OPENROUTER_MODELS:
-            conn.execute(
-                "INSERT INTO job_configuration(template_id, rater_type, rater_config) "
-                "VALUES (?, 'llm', ?)",
-                (tpl_id, json.dumps(_openrouter_config(model))),
+        announce_vocabulary_reset(conn)
+        created = _seed_wheel_templates(conn)
+        if PAIR_WHEEL_TEMPLATE_NAME in created:
+            from bin import prompts as _prompts
+            _prompts.push(
+                DEFAULT_JUDGE_PROMPT_NAME,
+                PAIR_WHEEL_JUDGE_INSTRUCTIONS,
+                labels=["production"],
             )
-        conn.execute(
-            "INSERT INTO job_configuration(template_id, rater_type, rater_config) "
-            "VALUES (?, 'human', '{}')",
-            (tpl_id,),
+            _prompts.push(
+                SEED_DOMAIN_BUILDER_PROMPT_NAME,
+                SEED_DOMAIN_BUILDER_INSTRUCTIONS,
+                labels=["production"],
+            )
+        _sync_default_llm_configs(
+            conn, _template_id(conn, PAIR_WHEEL_TEMPLATE_NAME,
+                               PAIR_WHEEL_TEMPLATE_VERSION)
         )
-        _seed_wheel_templates(conn)
-        conn.commit()
 
+def _existing_template(conn: sqlite3.Connection, name: str, version: int):
+    return conn.execute(
+        "SELECT id FROM eval_template WHERE name=? AND version=?",
+        (name, version),
+    ).fetchone()
 
-def _seed_wheel_templates(conn: sqlite3.Connection) -> None:
-    """Seed the wave-12 wheel templates (idempotent, version 1).
+def _template_id(conn: sqlite3.Connection, name: str, version: int) -> int:
+    row = conn.execute(
+        "SELECT id FROM eval_template WHERE name=? AND version=?",
+        (name, version),
+    ).fetchone()
+    if row is None:
+        raise LookupError(f"no template: {name} v{version}")
+    return row["id"]
 
-    Mirrors the v0 seed pattern: push the matching judge-instruction prompt
-    (text-equality idempotent) and insert the eval_template row plus ONE
-    active human job_configuration. No LLM panel configs here — domain
-    wheel judgements are reviewed by humans (the L6 review bar), and the
-    LLM drain path stays scoped to the v0 rubric's own configs.
-    Commits its own work so both init_db paths (fresh + existing) persist.
+def retired_corpus(conn: sqlite3.Connection) -> dict[str, int]:
+    """Ratings this database holds under a rubric the reset retired.
+
+    Keyed by "name vN". Empty on a database with nothing to abandon, which
+    is what keeps the notice from crying wolf on a fresh install.
+    """
+    found: dict[str, int] = {}
+    rows = conn.execute(
+        "SELECT t.name AS name, t.version AS version, "
+        "       COUNT(DISTINCT s.rating_id) AS ratings "
+        "FROM score s JOIN eval_template t ON t.id = s.template_id "
+        "GROUP BY t.name, t.version"
+    ).fetchall()
+    for row in rows:
+        for name, version in RETIRED_BY_THE_VOCABULARY_RESET:
+            if row["name"] == name and version in (None, row["version"]):
+                found[f"{row['name']} v{row['version']}"] = row["ratings"]
+    return found
+
+def announce_vocabulary_reset(conn: sqlite3.Connection) -> Optional[str]:
+    """Tell the operator, once per init, that the old corpus no longer joins.
+
+    Returns the notice (also printed to stderr), or None when this database
+    holds no pre-reset judgement.
+    """
+    found = retired_corpus(conn)
+    if not found:
+        return None
+    notice = VOCABULARY_RESET_NOTICE.format(
+        reset=VOCABULARY_RESET,
+        ratings=sum(found.values()),
+        db=DB_PATH,
+        rubrics=", ".join(sorted(found)),
+        pair_rubric=PAIR_WHEEL_TEMPLATE_NAME,
+        idea_rubric=PAIR_IDEA_WHEEL_TEMPLATE_NAME,
+        version=PAIR_WHEEL_TEMPLATE_VERSION,
+    )
+    print(notice, file=sys.stderr)
+    return notice
+
+def _seed_wheel_templates(conn: sqlite3.Connection) -> set[str]:
+    """Seed every registered rubric. Idempotent; returns the names created.
+
+    The existence check and the INSERT run in ONE ``BEGIN IMMEDIATE``
+    transaction: eval_template carries UNIQUE(name, version), so an unlocked
+    check-then-insert lets a concurrent init_db abort on the constraint
+    instead of finding the row. The Langfuse push happens AFTER the commit,
+    because a network call has no business holding a write lock.
     """
     from bin import prompts as _prompts
 
+    created: set[str] = set()
+    pushes: list[tuple[str, str]] = []
     for name, version, definition, prompt_name, instructions in WHEEL_SEED_TEMPLATES:
-        existing = conn.execute(
-            "SELECT id FROM eval_template WHERE name=? AND version=?",
-            (name, version),
-        ).fetchone()
-        if existing is not None:
-            continue
         validate_output_definition(definition)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            existing = _existing_template(conn, name, version)
+            if existing is None:
+                tpl_id = conn.execute(
+                    "INSERT INTO eval_template(name, version, output_definition, "
+                    "                          langfuse_prompt_name) "
+                    "VALUES (?, ?, ?, ?)",
+                    (name, version, json.dumps(definition), prompt_name),
+                ).lastrowid
+                conn.execute(
+                    "INSERT INTO job_configuration(template_id, rater_type, "
+                    "rater_config) VALUES (?, 'human', '{}')",
+                    (tpl_id,),
+                )
+                created.add(name)
+                pushes.append((prompt_name, instructions))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    for prompt_name, instructions in pushes:
         _prompts.push(prompt_name, instructions, labels=["production"])
-        tpl_id = conn.execute(
-            "INSERT INTO eval_template(name, version, output_definition, "
-            "                          langfuse_prompt_name) "
-            "VALUES (?, ?, ?, ?)",
-            (name, version, json.dumps(definition), prompt_name),
-        ).lastrowid
-        conn.execute(
-            "INSERT INTO job_configuration(template_id, rater_type, rater_config) "
-            "VALUES (?, 'human', '{}')",
-            (tpl_id,),
-        )
-    conn.commit()
-
+    return created
 
 def _sync_default_llm_configs(conn: sqlite3.Connection, template_id: int) -> None:
-    """Keep the seed rubric on the configured frontier OpenRouter panel.
+    """Keep the one pair rubric on DEFAULT_JUDGE_PANEL_MODELS.
 
-    Reuse one legacy active row for the primary model so already-enqueued
-    judgements immediately pick up the new configuration. Add the other two
-    models and archive any remaining legacy defaults.
+    Reuse a legacy active row for each panel model so already-enqueued
+    judgements immediately pick up the new configuration, then archive every
+    active llm row the panel no longer names -- see
+    ONE_MACHINE_OPINION_IS_ENOUGH_TO_DISAGREE_WITH_A_HUMAN for why the slice
+    is one model wide.
     """
     rows = conn.execute(
         "SELECT id, rater_config FROM job_configuration "
@@ -584,12 +664,12 @@ def _sync_default_llm_configs(conn: sqlite3.Connection, template_id: int) -> Non
             model = json.loads(row["rater_config"]).get("model")
         except (TypeError, json.JSONDecodeError):
             model = None
-        if model in FRONTIER_OPENROUTER_MODELS and model not in by_model:
+        if model in DEFAULT_JUDGE_PANEL_MODELS and model not in by_model:
             by_model[model] = row["id"]
         else:
             legacy.append(row["id"])
 
-    for model in FRONTIER_OPENROUTER_MODELS:
+    for model in DEFAULT_JUDGE_PANEL_MODELS:
         config = json.dumps(_openrouter_config(model))
         if model in by_model:
             conn.execute(
@@ -617,16 +697,83 @@ def _sync_default_llm_configs(conn: sqlite3.Connection, template_id: int) -> Non
         )
     conn.commit()
 
+_POST_V0_COLUMNS = (
+    ("pending_judgement", "domain_id", "INTEGER REFERENCES domain(id)"),
+    ("pending_judgement", "pair_key", "TEXT"),
+    ("pending_judgement", "content_a", "TEXT"),
+    ("pending_judgement", "content_b", "TEXT"),
+    ("score", "pair_key", "TEXT"),
+)
+
+_POST_V0_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_pending_pair_key "
+    "ON pending_judgement(pair_key)",
+    "CREATE INDEX IF NOT EXISTS idx_score_pair_key ON score(pair_key)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_one_open_row_per_config_pair "
+    "ON pending_judgement(config_id, pair_key) "
+    "WHERE status='pending' AND pair_key IS NOT NULL",
+)
 
 def _migrate_pending_judgement(conn) -> None:
-    """Idempotent ALTER TABLE for new columns added after v0."""
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(pending_judgement)")}
-    if "domain_id" not in cols:
-        conn.execute(
-            "ALTER TABLE pending_judgement ADD COLUMN domain_id INTEGER REFERENCES domain(id)"
-        )
-        conn.commit()
+    """Idempotent ALTER TABLE + backfill for columns added after v0.
 
+    Runs after the schema script, so the tables always exist. Adding a
+    column twice is an error in SQLite, hence the PRAGMA check; the index
+    and backfill passes are no-ops once they have run.
+    """
+    for table, column, decl in _POST_V0_COLUMNS:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    for ddl in _POST_V0_INDEXES:
+        conn.execute(ddl)
+    conn.commit()
+    backfill_pair_keys(conn)
+
+def backfill_pair_keys(conn=None) -> int:
+    """Give every pair-shaped judgement row its content snapshot and pair key.
+
+    Idempotent: only rows with a NULL pair_key are considered, and rows that
+    are not a pair (single-subject judgements, byes) are left NULL forever.
+    Returns the number of pending rows keyed.
+    """
+    if conn is None:
+        with _connect() as own:
+            return backfill_pair_keys(own)
+    rows = conn.execute(
+        "SELECT p.id, p.trace_payload, p.content_a, p.content_b, "
+        "       t.name AS rubric, t.version AS rubric_version "
+        "FROM pending_judgement p "
+        "JOIN job_configuration c ON c.id = p.config_id "
+        "JOIN eval_template t ON t.id = c.template_id "
+        "WHERE p.pair_key IS NULL"
+    ).fetchall()
+    keyed = 0
+    for row in rows:
+        try:
+            payload = json.loads(row["trace_payload"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        content_a = row["content_a"]
+        content_b = row["content_b"]
+        if content_a is None or content_b is None:
+            content_a, content_b = snapshot_pair(payload)
+        if content_a is None or content_b is None:
+            continue
+        key = pair_key(content_a, content_b, row["rubric"], row["rubric_version"])
+        conn.execute(
+            "UPDATE pending_judgement SET pair_key=?, content_a=?, content_b=? "
+            "WHERE id=?",
+            (key, content_a, content_b, row["id"]),
+        )
+        keyed += 1
+    conn.execute(
+        "UPDATE score SET pair_key = ("
+        "  SELECT p.pair_key FROM pending_judgement p WHERE p.id = score.pending_id"
+        ") WHERE pair_key IS NULL AND pending_id IS NOT NULL"
+    )
+    conn.commit()
+    return keyed
 
 def get_template(name: str, version: Optional[int] = None) -> dict:
     """Fetch a template by name (latest non-draft version if version is None)."""
@@ -655,7 +802,6 @@ def get_template(name: str, version: Optional[int] = None) -> dict:
             ),
         }
 
-
 def list_active_configs(template_name: str) -> list[dict]:
     """Active job configurations for a given rubric, by name."""
     tpl = get_template(template_name)
@@ -677,51 +823,246 @@ def list_active_configs(template_name: str) -> list[dict]:
             for r in rows
         ]
 
+SNAPSHOT_MAX_CHARS = 200_000
 
-# ── Enqueue / list pending ──────────────────────────────────────────────
+def _read_source_text(ref: str) -> Optional[str]:
+    try:
+        path = Path(ref)
+        if not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")[:SNAPSHOT_MAX_CHARS]
+    except (OSError, ValueError):
+        return None
+
+def _side_snapshot(card: Any, ref: Any) -> Optional[str]:
+    """The judged text of one side, or None when there is no text to judge.
+
+    A path is content only once it has been read. An unreadable ref yields
+    None rather than the ref string, because a pair keyed by a filename would
+    collide with every other unreadable ref of that name and would change
+    identity the moment the file moved.
+    """
+    if isinstance(card, dict):
+        text = card.get("body") or card.get("text") or card.get("title")
+        if text:
+            return str(text)[:SNAPSHOT_MAX_CHARS]
+    if isinstance(ref, str) and ref.strip():
+        return _read_source_text(ref)
+    return None
+
+def snapshot_pair(payload: dict) -> tuple[Optional[str], Optional[str]]:
+    """Resolve a trace payload into the two texts judged.
+
+    Card-shaped rows already carry the content; match-shaped rows carry only
+    a file ref, which is read ONCE, here, at enqueue time. Returns (None, None)
+    for payloads that are not a pair (single-subject rows, byes).
+    """
+    if not isinstance(payload, dict):
+        return None, None
+    a = _side_snapshot(payload.get("card_a"), payload.get("input_a"))
+    b = _side_snapshot(payload.get("card_b"), payload.get("input_b"))
+    if a is None or b is None:
+        return None, None
+    return a, b
+
+REUSE_SATISFIED_BY: dict[str, tuple[str, ...]] = {
+    "human": ("human",),
+    "llm": ("human", "llm"),
+}
+
+def satisfying_rater_types(rater_type: str) -> tuple[str, ...]:
+    """Which raters' verdicts may stand in for ``rater_type``'s own queue.
+
+    docs/design/priority-tournament.md: the judgements a person makes are
+    the product, so a machine verdict must never foreclose the human
+    comparison the tournament exists to collect. A human verdict may stand
+    in for a machine one — the asymmetry is the point. Any other rater type
+    is satisfied only by itself, so an unrecognised rater is never silenced
+    by a machine.
+    """
+    return REUSE_SATISFIED_BY.get(rater_type, (rater_type,))
+
+def _rating_rater_types(conn, rating_id: str) -> set[str]:
+    """The rater types recorded on one rating's score rows."""
+    types: set[str] = set()
+    for row in conn.execute(
+        "SELECT metadata FROM score WHERE rating_id=?", (rating_id,)
+    ):
+        try:
+            meta = json.loads(row["metadata"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        rater_type = (meta.get("rater") or {}).get("type")
+        if rater_type:
+            types.add(rater_type)
+    return types
+
+def _find_judgement_by_pair(conn, key: str,
+                            rater_types: Optional[Sequence[str]] = None
+                            ) -> Optional[str]:
+    """The rating in effect for this pair, read from RESOLVED pending rows.
+
+    Resolved pending rows are the only source: score.pair_key is derived
+    from the pending row it belongs to (see backfill_pair_keys), so a
+    keyed score row can never name a pair its pending row does not, and
+    answering from score would bypass the revision chain and hand back a
+    superseded rating.
+    """
+    wanted = set(rater_types) if rater_types is not None else None
+    for row in conn.execute(
+        "SELECT id, rating_id FROM pending_judgement "
+        "WHERE pair_key=? AND status='done' AND rating_id IS NOT NULL "
+        "ORDER BY completed_at ASC, id ASC",
+        (key,),
+    ).fetchall():
+        rating_id = _effective_rating_id(conn, row["id"]) or row["rating_id"]
+        if wanted is None or _rating_rater_types(conn, rating_id) & wanted:
+            return rating_id
+    return None
+
+def find_judgement_by_pair(key: str, *,
+                           for_rater_type: Optional[str] = None
+                           ) -> Optional[str]:
+    """The rating_id already recorded for this content pair, or None.
+
+    Follows the revision chain, so the answer is the rating currently in
+    effect rather than a superseded one. Derive the key with
+    ``pair_key(content_a, content_b, rubric_id, rubric_version)``.
+
+    ``for_rater_type`` names the queue asking. Omit it to ask "has anybody
+    judged this pair"; pass 'human' to ask "has a PERSON judged this pair",
+    which is the question the no-rematch rule must answer before it declines
+    to ask a person again.
+    """
+    rater_types = (
+        None if for_rater_type is None else satisfying_rater_types(for_rater_type)
+    )
+    with _connect(readonly=True) as conn:
+        return _find_judgement_by_pair(conn, key, rater_types)
+
+def pair_key_of_pending(pending_id: int) -> Optional[str]:
+    """The stored pair key of one pending row (None for non-pair rows)."""
+    with _connect(readonly=True) as conn:
+        row = conn.execute(
+            "SELECT pair_key FROM pending_judgement WHERE id=?", (pending_id,)
+        ).fetchone()
+        return row["pair_key"] if row is not None else None
+
+class EnqueueOutcome(list):
+    """The inserted pending ids, plus the pair identity they resolved to.
+
+    A list of pending_judgement ids for every existing caller; `pair_key` and
+    `existing_rating_id` say why the list may be empty — an already-judged
+    pair is never re-asked of the rater it was already asked of, and its
+    prior rating is the answer instead. The reuse gate is per rater type, so
+    a non-empty list and a non-null `existing_rating_id` can coexist: a
+    machine already answered, a person has still never been asked.
+    """
+
+    def __init__(self, pending_ids=(), *, pair_key: Optional[str] = None,
+                 existing_rating_id: Optional[str] = None):
+        super().__init__(pending_ids)
+        self.pair_key = pair_key
+        self.existing_rating_id = existing_rating_id
+
 def enqueue_for_match(
     *,
     tournament_db_path: str,
     match_id: int,
-    template_name: str = SEED_TEMPLATE_NAME,
+    template_name: str = DEFAULT_TEMPLATE_NAME,
     trace_id: Optional[str] = None,
-) -> list[int]:
+    payload: Optional[dict] = None,
+    domain_id: Optional[int] = None,
+) -> EnqueueOutcome:
     """For each active config on this rubric, insert a pending row.
 
-    Returns the list of inserted pending_judgement IDs. Idempotent on
-    (config_id, tournament_db_path, match_id) — won't duplicate.
+    Returns an EnqueueOutcome (a list of inserted pending_judgement ids).
+    Three things stop a row from being written:
+      - the pair already carries a completed judgement THAT RATER TYPE
+        accepts under this rubric version — nothing already judged is
+        re-asked of the same kind of rater, and the outcome's
+        existing_rating_id is that prior rating. The gate is scoped by
+        :func:`satisfying_rater_types`: a machine verdict never stands in
+        for a person's, so the LLM drain cannot silently foreclose the human
+        comparison the tournament exists to collect;
+      - the pair is already queued, unresolved, for the same config;
+      - a row already exists for (config_id, tournament_db_path, match_id),
+        the pre-pair-key idempotency rule, which still governs rows whose
+        content could not be snapshotted.
+
+    All three are SELECTs the INSERT depends on, so they run inside ONE
+    ``BEGIN IMMEDIATE`` transaction (the shape bin/campaigns.py uses in five
+    places) and the pair stop is backed in SQL by
+    ``idx_pending_one_open_row_per_config_pair``. Read unlocked they are
+    advisory: two concurrent enqueues of the same pair both see "not
+    queued" and both insert, and the same person is asked twice.
+
+    `payload` overrides the tournament-DB read, for callers that hold the
+    content already; the row is snapshotted from it either way.
     """
-    payload = _trace_payload(tournament_db_path, match_id)
     if payload is None:
-        return []
+        payload = _trace_payload(tournament_db_path, match_id)
+    if payload is None:
+        return EnqueueOutcome()
+    template = get_template(template_name)
+    content_a, content_b = snapshot_pair(payload)
+    key = (
+        pair_key(content_a, content_b, template["name"], template["version"])
+        if content_a is not None and content_b is not None
+        else None
+    )
     configs = list_active_configs(template_name)
     inserted: list[int] = []
+    prior_by_rater: dict[str, Optional[str]] = {}
+    reused: Optional[str] = None
     with _connect() as conn:
-        for cfg in configs:
-            # Idempotency check — skip if a pending row already exists
-            # for this (config, trace) pair.
-            existing = conn.execute(
-                "SELECT id FROM pending_judgement "
-                "WHERE config_id=? AND tournament_db_path=? AND match_id=?",
-                (cfg["id"], tournament_db_path, match_id),
-            ).fetchone()
-            if existing is not None:
-                continue
-            pid = conn.execute(
-                "INSERT INTO pending_judgement(config_id, tournament_db_path, "
-                "match_id, trace_id, trace_payload) VALUES (?, ?, ?, ?, ?)",
-                (
-                    cfg["id"],
-                    tournament_db_path,
-                    match_id,
-                    trace_id,
-                    json.dumps(payload),
-                ),
-            ).lastrowid
-            inserted.append(pid)
-        conn.commit()
-    return inserted
-
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for cfg in configs:
+                rater_type = cfg["rater_type"]
+                if key is not None and rater_type not in prior_by_rater:
+                    prior_by_rater[rater_type] = _find_judgement_by_pair(
+                        conn, key, satisfying_rater_types(rater_type)
+                    )
+                prior = prior_by_rater.get(rater_type)
+                if prior is not None:
+                    reused = reused or prior
+                    continue
+                existing = conn.execute(
+                    "SELECT id FROM pending_judgement "
+                    "WHERE config_id=? AND tournament_db_path=? AND match_id=?",
+                    (cfg["id"], tournament_db_path, match_id),
+                ).fetchone()
+                if existing is not None:
+                    continue
+                if key is not None and conn.execute(
+                    "SELECT id FROM pending_judgement "
+                    "WHERE config_id=? AND pair_key=? AND status='pending'",
+                    (cfg["id"], key),
+                ).fetchone() is not None:
+                    continue
+                pid = conn.execute(
+                    "INSERT INTO pending_judgement(config_id, tournament_db_path, "
+                    "match_id, trace_id, trace_payload, pair_key, content_a, "
+                    "content_b, domain_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        cfg["id"],
+                        tournament_db_path,
+                        match_id,
+                        trace_id,
+                        json.dumps(payload),
+                        key,
+                        content_a,
+                        content_b,
+                        domain_id,
+                    ),
+                ).lastrowid
+                inserted.append(pid)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return EnqueueOutcome(inserted, pair_key=key, existing_rating_id=reused)
 
 def _trace_payload(tournament_db_path: str, match_id: int) -> Optional[dict]:
     """Read the match row from the tournament DB and shape it for raters."""
@@ -737,7 +1078,6 @@ def _trace_payload(tournament_db_path: str, match_id: int) -> Optional[dict]:
             (match_id,),
         ).fetchone()
     except sqlite3.OperationalError:
-        # Old DB shape (pre-langfuse rewrite): no synthesis/winner columns.
         row = conn.execute(
             "SELECT id, round, slot, input_a, input_b, is_bye, conclusion "
             "FROM matches WHERE id=?",
@@ -757,7 +1097,6 @@ def _trace_payload(tournament_db_path: str, match_id: int) -> Optional[dict]:
         "is_bye": bool(row["is_bye"]),
         "conclusion": row["conclusion"],
     }
-    # Best-effort fields from the post-Langfuse schema.
     for field in ("synthesis", "winner_id", "winner_reasoning", "trace_id"):
         try:
             payload[field] = row[field]
@@ -765,12 +1104,11 @@ def _trace_payload(tournament_db_path: str, match_id: int) -> Optional[dict]:
             payload[field] = None
     return payload
 
-
 def list_pending(rater_type: Optional[str] = None, limit: int = 50) -> list[dict]:
     """Return pending rows, optionally filtered to one rater type."""
     sql = (
         "SELECT p.id, p.config_id, p.tournament_db_path, p.match_id, "
-        "       p.trace_id, p.trace_payload, p.created_at, "
+        "       p.trace_id, p.trace_payload, p.pair_key, p.created_at, "
         "       c.rater_type, c.rater_config, "
         "       t.name AS template_name, t.version AS template_version, "
         "       t.output_definition, d.name AS domain_name, "
@@ -798,6 +1136,7 @@ def list_pending(rater_type: Optional[str] = None, limit: int = 50) -> list[dict
                 "match_id": r["match_id"],
                 "trace_id": r["trace_id"],
                 "trace_payload": json.loads(r["trace_payload"]),
+                "pair_key": r["pair_key"],
                 "rater_type": r["rater_type"],
                 "rater_config": json.loads(r["rater_config"]),
                 "template_name": r["template_name"],
@@ -813,18 +1152,15 @@ def list_pending(rater_type: Optional[str] = None, limit: int = 50) -> list[dict
             for r in rows
         ]
 
-
-# ── Write a judgement (2 Score rows per subject + flip pending → done) ──
 _PENDING_ROW_SQL = (
     "SELECT p.id, p.config_id, p.tournament_db_path, p.match_id, "
-    "       p.trace_id, c.template_id, t.version AS template_version, "
-    "       t.output_definition "
+    "       p.trace_id, p.pair_key, c.template_id, "
+    "       t.version AS template_version, t.output_definition "
     "FROM pending_judgement p "
     "JOIN job_configuration c ON c.id = p.config_id "
     "JOIN eval_template t ON t.id = c.template_id "
     "WHERE p.id=?"
 )
-
 
 def _validated_entries(
     prow,
@@ -855,7 +1191,6 @@ def _validated_entries(
             )
         if verdict is None or confidence is None:
             raise ValueError("verdict and confidence are required")
-        # Legacy shape: the sole subject, legacy metric names.
         entries = [(None, verdict, confidence, rationale)]
     else:
         if verdict is not None or confidence is not None:
@@ -881,7 +1216,7 @@ def _validated_entries(
                 subject_verdicts[s].get("confidence"),
                 subject_verdicts[s].get("rationale"),
             )
-            for s in subjects  # declared order, deterministic rows
+            for s in subjects
         ]
 
     for subj, v, c, r in entries:
@@ -898,7 +1233,6 @@ def _validated_entries(
             raise ValueError(f"{label}rubric requires rationale; got empty")
     return entries
 
-
 def _insert_score_rows(conn, prow, rating_id: str, entries, rater: dict) -> None:
     """THE single score-writing path: per-subject verdict + confidence rows
     under one rating_id. Shared by write_judgement and revise_judgement;
@@ -909,7 +1243,8 @@ def _insert_score_rows(conn, prow, rating_id: str, entries, rater: dict) -> None
         prow["template_id"],
         prow["template_version"],
     )
-    trace = (prow["tournament_db_path"], prow["match_id"], prow["trace_id"])
+    trace = (prow["tournament_db_path"], prow["match_id"], prow["trace_id"],
+             prow["pair_key"])
     for subj, v, c, r in entries:
         prefix = f"judgement.{subj}." if subj is not None else "judgement."
         verdict_meta = {"rater": rater}
@@ -919,20 +1254,19 @@ def _insert_score_rows(conn, prow, rating_id: str, entries, rater: dict) -> None
         conn.execute(
             "INSERT INTO score(rating_id, pending_id, template_id, "
             "  rubric_version, name, data_type, value, metadata, "
-            "  tournament_db_path, match_id, trace_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "  tournament_db_path, match_id, trace_id, pair_key) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (*common, f"{prefix}verdict", "CATEGORICAL",
              v, json.dumps(verdict_meta), *trace),
         )
         conn.execute(
             "INSERT INTO score(rating_id, pending_id, template_id, "
             "  rubric_version, name, data_type, value, metadata, "
-            "  tournament_db_path, match_id, trace_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "  tournament_db_path, match_id, trace_id, pair_key) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (*common, f"{prefix}confidence", "CATEGORICAL",
              c, json.dumps(confidence_meta), *trace),
         )
-
 
 def write_judgement(
     *,
@@ -964,7 +1298,6 @@ def write_judgement(
     """
     rating_id = str(uuid.uuid4())
     with _connect() as conn:
-        # Look up the pending row + template definition.
         prow = conn.execute(_PENDING_ROW_SQL, (pending_id,)).fetchone()
         if prow is None:
             raise LookupError(f"pending {pending_id} not found")
@@ -980,12 +1313,6 @@ def write_judgement(
             subject_verdicts=subject_verdicts,
         )
         _insert_score_rows(conn, prow, rating_id, entries, rater)
-        # Duplicate-rating guard: the pre-check above is advisory only — a
-        # concurrent writer can resolve this row between our SELECT and this
-        # point (check-then-act race). The status flip is therefore
-        # conditional on status='pending'; if another writer won, rowcount
-        # is 0 and we raise, rolling back this transaction's score INSERTs
-        # so exactly one rating survives per pending row.
         cur = conn.execute(
             "UPDATE pending_judgement SET status='done', rating_id=?, "
             "completed_at=? WHERE id=? AND status='pending'",
@@ -996,8 +1323,6 @@ def write_judgement(
         conn.commit()
     return rating_id
 
-
-# ── Append-only revision (wave-13 slice A; operator-environment-v13 §1) ──
 def _revision_chain_rows(conn, pending_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT id, pending_id, previous_rating_id, new_rating_id, "
@@ -1005,7 +1330,6 @@ def _revision_chain_rows(conn, pending_id: int) -> list[sqlite3.Row]:
         "FROM judgement_revision WHERE pending_id=? ORDER BY id ASC",
         (pending_id,),
     ).fetchall()
-
 
 def _effective_rating_id(conn, pending_id: int) -> Optional[str]:
     """Tip of the revision chain: the original pending.rating_id when no
@@ -1020,13 +1344,11 @@ def _effective_rating_id(conn, pending_id: int) -> Optional[str]:
         return revisions[-1]["new_rating_id"]
     return prow["rating_id"]
 
-
 def effective_rating_id(pending_id: int) -> Optional[str]:
     """The rating_id currently in effect for a pending: follow the revision
     chain from the original rating to the tip. None for unresolved rows."""
     with _connect(readonly=True) as conn:
         return _effective_rating_id(conn, pending_id)
-
 
 def get_revision_chain(pending_id: int) -> list[dict]:
     """Full rating chain for a pending, original first, tip last.
@@ -1057,7 +1379,6 @@ def get_revision_chain(pending_id: int) -> list[dict]:
                 "created_at": rev["created_at"],
             })
         return chain
-
 
 def revise_judgement(
     pending_id: int,
@@ -1122,11 +1443,6 @@ def revise_judgement(
             subject_verdicts=subject_verdicts,
         )
         _insert_score_rows(conn, prow, rating_id, entries, rater)
-        # Concurrency guard mirroring write_judgement's conditional flip:
-        # the INSERT below re-asserts the chain tip inside the transaction
-        # via a WHERE-guarded SELECT — if a concurrent reviser won the
-        # race, no row matches, rowcount is 0, and we roll back so the
-        # score INSERTs above never survive without their revision row.
         cur = conn.execute(
             "INSERT INTO judgement_revision(pending_id, previous_rating_id, "
             "  new_rating_id, revised_by, reason) "
@@ -1146,8 +1462,6 @@ def revise_judgement(
         conn.commit()
     return rating_id
 
-
-# ── LLM judge worker ────────────────────────────────────────────────────
 def _payload_as_card_pair(payload: dict) -> dict:
     """Normalize trace_payload to (card_a, card_b) tuples regardless of whether
     the row was written under the new card-shaped contract or the legacy
@@ -1156,14 +1470,12 @@ def _payload_as_card_pair(payload: dict) -> dict:
     a = payload.get("card_a") or {}
     b = payload.get("card_b") or {}
     if not a or not b:
-        # Legacy match shape — synthesize cards from input paths + synthesis.
         synth = payload.get("synthesis") or payload.get("conclusion") or ""
         a = a or {"title": "Input 1", "body": payload.get("input_a") or "(none)"}
         b = b or {"title": "Input 2", "body": payload.get("input_b") or "(none)"}
         if synth and not a.get("body_extra"):
             a["body_extra"] = synth[:4000]
     return {"a": a, "b": b}
-
 
 def _build_dspy_lm(cfg: dict) -> "dspy.LM":
     """Build a DSPy LM client from a rater_config row."""
@@ -1184,7 +1496,6 @@ def _build_dspy_lm(cfg: dict) -> "dspy.LM":
         num_retries=num_retries,
     )
 
-
 def run_llm_judge_for_pending(pending_id: int) -> Optional[str]:
     """Drain one pending LLM-judge row via the DSPy MatchJudge module."""
     import dspy as _dspy
@@ -1201,19 +1512,12 @@ def run_llm_judge_for_pending(pending_id: int) -> Optional[str]:
     cfg = p["rater_config"]
     cards = _payload_as_card_pair(p["trace_payload"])
 
-    # Use whatever LM the caller explicitly configured (DummyLM under tests).
-    # Otherwise build this row's configured model. Keep it in a local DSPy
-    # context: configuring it globally makes the first queue row's model leak
-    # into every later row in the same drain process.
     settings_lm = getattr(_dspy.settings, "lm", None)
     row_lm = settings_lm or _build_dspy_lm(cfg)
 
     try:
         with _dspy.context(lm=row_lm):
-            # Domain-generated pairs must use the domain's own judging brief.
-            # Legacy/direct tournament rows have no domain and intentionally
-            # fall back to the global production judge prompt.
-            judge = MatchJudge(prompt_name=p["judge_prompt_name"] or SEED_LANGFUSE_PROMPT_NAME)
+            judge = MatchJudge(prompt_name=p["judge_prompt_name"] or DEFAULT_JUDGE_PROMPT_NAME)
             result = judge(
                 card_a_title=cards["a"].get("title", "(no title)"),
                 card_a_body=cards["a"].get("body", "(empty)"),
@@ -1236,11 +1540,6 @@ def run_llm_judge_for_pending(pending_id: int) -> Optional[str]:
         return rating_id
     except Exception as e:
         with _connect() as conn:
-            # Valid-transition guard: only pending→error. If the row was
-            # already resolved (e.g. a concurrent worker or the UI completed
-            # it while our LLM call was in flight, making write_judgement
-            # raise "already resolved"), stomping it to 'error' would leave
-            # error status alongside a live rating_id + committed scores.
             conn.execute(
                 "UPDATE pending_judgement SET status='error', "
                 "error_message=?, completed_at=? WHERE id=? AND status='pending'",
@@ -1248,7 +1547,6 @@ def run_llm_judge_for_pending(pending_id: int) -> Optional[str]:
             )
             conn.commit()
         raise
-
 
 def drain_llm_queue(limit: int = 50) -> dict:
     """Process all pending LLM-judge rows up to `limit`."""
@@ -1266,8 +1564,29 @@ def drain_llm_queue(limit: int = 50) -> dict:
             results["errors"].append({"pending_id": p["id"], "error": str(e)[:200]})
     return results
 
+def _export_trace(row) -> tuple[dict, Any, Any]:
+    """The display payload and the two judged contents for one export line.
 
-# ── Export ──────────────────────────────────────────────────────────────
+    The snapshot taken at enqueue time is authoritative: the export must
+    reproduce what the rater actually judged, and a work-order pair's
+    `tournament_db_path` is a `domain:<id>` handle that no re-read can
+    resolve. Falls back to the stored payload, then to the tournament DB,
+    for rows written before snapshots existed.
+    """
+    try:
+        payload = json.loads(row["trace_payload"] or "{}")
+    except (TypeError, json.JSONDecodeError, IndexError, KeyError):
+        payload = {}
+    if not payload:
+        payload = _trace_payload(row["tournament_db_path"], row["match_id"]) or {}
+    side_a = row["content_a"]
+    side_b = row["content_b"]
+    if side_a is None:
+        side_a = _side_snapshot(payload.get("card_a"), payload.get("input_a"))
+    if side_b is None:
+        side_b = _side_snapshot(payload.get("card_b"), payload.get("input_b"))
+    return payload, side_a, side_b
+
 def export_jsonl(rubric: str, rater_type: Optional[str] = None) -> list[dict]:
     """Join score rows back into per-judgement JSONL records.
 
@@ -1287,6 +1606,8 @@ def export_jsonl(rubric: str, rater_type: Optional[str] = None) -> list[dict]:
            s_v.metadata AS verdict_meta,
            s_c.value AS confidence, s_c.metadata AS confidence_meta,
            s_v.tournament_db_path, s_v.match_id, s_v.trace_id,
+           COALESCE(s_v.pair_key, p.pair_key) AS pair_key,
+           p.trace_payload, p.content_a, p.content_b,
            t.name AS rubric, t.version AS rubric_version,
            t.output_definition,
            s_v.created_at
@@ -1294,6 +1615,7 @@ def export_jsonl(rubric: str, rater_type: Optional[str] = None) -> list[dict]:
     JOIN score s_c ON s_c.rating_id = s_v.rating_id
                  AND s_c.name = 'judgement.confidence'
     JOIN eval_template t ON t.id = s_v.template_id
+    LEFT JOIN pending_judgement p ON p.id = s_v.pending_id
     {sql_filter}
       AND s_v.name = 'judgement.verdict'
     ORDER BY s_v.created_at ASC
@@ -1304,20 +1626,19 @@ def export_jsonl(rubric: str, rater_type: Optional[str] = None) -> list[dict]:
     for r in rows:
         verdict_meta = json.loads(r["verdict_meta"])
         outdef = json.loads(r["output_definition"])
-        # Lazy-load trace payload from the tournament DB so we always
-        # get the latest version of the synthesis if it ever updates.
-        trace = _trace_payload(r["tournament_db_path"], r["match_id"]) or {}
+        trace, side_a, side_b = _export_trace(r)
         out.append({
             "ratingId": r["rating_id"],
             "rubric": r["rubric"],
             "rubricVersion": r["rubric_version"],
+            "pairKey": r["pair_key"],
             "instructions": outdef.get("instructions", ""),
             "trace": {
                 "tournamentDbPath": r["tournament_db_path"],
                 "matchId": r["match_id"],
                 "label": trace.get("label"),
-                "input_a": trace.get("input_a"),
-                "input_b": trace.get("input_b"),
+                "input_a": side_a,
+                "input_b": side_b,
                 "synthesis": trace.get("synthesis") or trace.get("conclusion"),
                 "winner_id": trace.get("winner_id"),
                 "winner_reasoning": trace.get("winner_reasoning"),
@@ -1333,12 +1654,9 @@ def export_jsonl(rubric: str, rater_type: Optional[str] = None) -> list[dict]:
         })
     return out
 
-
-# ── CLI ─────────────────────────────────────────────────────────────────
 def _cmd_init(args):
     init_db()
     print(f"initialized {DB_PATH}")
-
 
 def _cmd_list_pending(args):
     rows = list_pending(rater_type=args.rater_type, limit=args.limit)
@@ -1351,11 +1669,9 @@ def _cmd_list_pending(args):
         )
     print(f"{len(rows)} pending")
 
-
 def _cmd_run_llm(args):
     res = drain_llm_queue(limit=args.limit)
     print(json.dumps(res, indent=2))
-
 
 def _cmd_enqueue(args):
     pids = enqueue_for_match(
@@ -1365,11 +1681,9 @@ def _cmd_enqueue(args):
     )
     print(json.dumps({"enqueued": pids}))
 
-
 def _cmd_export(args):
     for rec in export_jsonl(rubric=args.rubric, rater_type=args.rater_type):
         print(json.dumps(rec))
-
 
 def _cmd_revise(args):
     subject_verdicts = (
@@ -1391,7 +1705,6 @@ def _cmd_revise(args):
         "previous_rating_id": args.previous_rating_id,
         "new_rating_id": new_rating_id,
     }))
-
 
 def _cmd_seed_demo(args):
     """Walk every tournament DB in DATA_HOME and enqueue every concluded
@@ -1418,7 +1731,6 @@ def _cmd_seed_demo(args):
             total += len(n)
     print(f"enqueued {total} pending row(s) across tournament DBs in {home}")
 
-
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1437,11 +1749,11 @@ def main():
     sp = sub.add_parser("enqueue")
     sp.add_argument("--tournament-db", required=True)
     sp.add_argument("--match-id", type=int, required=True)
-    sp.add_argument("--template", default=SEED_TEMPLATE_NAME)
+    sp.add_argument("--template", default=DEFAULT_TEMPLATE_NAME)
     sp.set_defaults(func=_cmd_enqueue)
 
     sp = sub.add_parser("export")
-    sp.add_argument("--rubric", default=SEED_TEMPLATE_NAME)
+    sp.add_argument("--rubric", default=DEFAULT_TEMPLATE_NAME)
     sp.add_argument("--rater-type")
     sp.set_defaults(func=_cmd_export)
 
@@ -1467,7 +1779,6 @@ def main():
 
     args = p.parse_args()
     args.func(args)
-
 
 if __name__ == "__main__":
     main()

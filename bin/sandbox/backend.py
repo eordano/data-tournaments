@@ -15,7 +15,6 @@ import pydantic
 
 from bin.sandbox.profile import SandboxProfile
 
-
 class SandboxRunRequest(pydantic.BaseModel):
     """One bounded execution inside a sandbox."""
 
@@ -24,19 +23,15 @@ class SandboxRunRequest(pydantic.BaseModel):
     profile: SandboxProfile
     workorder_id: str = ""
     pack_digest: str = ""
-    # Ordered shell commands; each is executed in the pinned workspace.
     commands: tuple[str, ...] = ()
-    # Acceptance criteria echoed from the WorkOrder for the report.
     acceptance_criteria: tuple[str, ...] = ()
-
 
 class CommandResult(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(frozen=True)
 
     command: str
     exit_code: int
-    output_tail: str = ""  # bounded; full output goes to an artifact
-
+    output_tail: str = ""
 
 class SandboxRunResult(pydantic.BaseModel):
     """Typed outcome. Failure is a VALID outcome — never massaged."""
@@ -50,11 +45,9 @@ class SandboxRunResult(pydantic.BaseModel):
     started_at: str = ""
     finished_at: str = ""
     commands: tuple[CommandResult, ...] = ()
-    # artifact name -> content digest (bodies live in the CAS)
     artifacts: dict[str, str] = {}
     ok: bool = False
     error: str = ""
-
 
 class SandboxBackend(abc.ABC):
     """Interface every execution substrate implements."""
@@ -66,7 +59,6 @@ class SandboxBackend(abc.ABC):
         """Execute the request; must never raise for command failures
         (those are encoded in the result), only for infrastructure
         errors (cannot launch, cannot pin commit...)."""
-
 
 class FakeSandboxBackend(SandboxBackend):
     """Deterministic, network-free backend for tests and dry-runs.
@@ -111,13 +103,10 @@ class FakeSandboxBackend(SandboxBackend):
             error="",
         )
 
-
 _BACKENDS: dict[str, type[SandboxBackend]] = {"fake": FakeSandboxBackend}
-
 
 def register_backend(name: str, cls: type[SandboxBackend]) -> None:
     _BACKENDS[name] = cls
-
 
 def get_backend(name: str) -> SandboxBackend:
     """Instantiate a backend by name.
@@ -136,6 +125,10 @@ def get_backend(name: str) -> SandboxBackend:
                 "e2b backend requested but not available: install the 'e2b' "
                 "extra and set E2B_API_KEY"
             ) from e
+    if name == "bwrap" and name not in _BACKENDS:
+        from bin.sandbox.bwrap_backend import BwrapSandboxBackend
+
+        register_backend("bwrap", BwrapSandboxBackend)
     if name not in _BACKENDS:
         raise RuntimeError(
             f"unknown sandbox backend {name!r}; available: {sorted(_BACKENDS)}"

@@ -1,0 +1,1 @@
+{"type": "user", "message": {"role": "user", "content": "You are a VERIFIER. Lens: reproduce-it.\n\nFINDING [P2] Widget frobs twice on reload\nFile: lib/widget.ex"}}

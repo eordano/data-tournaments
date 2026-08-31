@@ -1,7 +1,7 @@
 # Showcase: the branch-fix loop — developers at the end, every branch validated alone
 
 Successor to docs/showcases/human-review-bar/ (the baseline composed run).
-Target artifact: https://claude.ai/code/artifact/1c5679a7-a496-46a8-91e9-eb97228358f6
+Target artifact: (private artifact)
 (the Aug-16 Human Review Bar), automated for a TEAM OF ENGINEERS doing
 bugfixes, with two hard requirements from the user:
 
@@ -109,7 +109,7 @@ carrying 2 frozen evidence_ref rows and an empty live source config:
                           0 failures" (L3: REAL pipeline inside Temporal,
                           stub eliminated)
     judging_gate:         ok — score=1.0 (honest ratio, not auto-pass)
-    approval -> promote:  audited approve by esteban; promote says
+    approval -> promote:  audited approve by changeme; promote says
                           "[DRY-RUN — no shipping credentials]"
 
     L6 live check: 1 pair logged == exactly 1 pending row, rater_type

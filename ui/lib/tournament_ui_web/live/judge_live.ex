@@ -3,12 +3,62 @@ defmodule TournamentUiWeb.JudgeLive do
   /judge — present pending judgements to a human rater and submit verdicts.
 
   v0 UI:
-    * Sidebar lists pending rows, newest at the bottom (FIFO).
+    * Queue strip lists the pairings of the pool's currently open round.
     * Main pane shows the active row's trace payload (the agent's
       synthesis, both inputs, the chosen winner) plus a verdict picker,
       a 3-state confidence selector, an optional rationale textarea.
     * Submit posts via TournamentUi.Judgement.submit_human/4 and
       advances to the next pending row.
+
+  ## One round at a time
+
+  The queue comes from `TournamentUi.Judgement.open_round_queue/1`, not a
+  global FIFO: a pool's round N+1 pairings are computed from the standings
+  round N produced, so a later round's pair must not be reachable while
+  the current one is open. `round_status/2` renders that pool's progress
+  as "round N, k of m remaining"; a roundless pool gets no progress line
+  rather than a fabricated one.
+
+  ## The judge never sees a score — any score, not just the tournament's
+
+  `@absolute_score_keys` are stripped from every pending payload by
+  `scrub_standings/1` before it reaches the assigns. Points, ranks and
+  per-item scores are removed rather than merely left unrendered, so a
+  producer that starts writing them into the pair payload cannot leak them
+  into the comparison. `docs/design/priority-tournament.md` is explicit
+  that showing standing anchors the next comparison to the last one; the
+  derived view lives at /standings instead.
+
+  The invariant is deliberately WIDER than tournament standing. The
+  model's self-assessed `WorkOrder.priority` is scrubbed by the same pass
+  (`@model_self_assessed_keys`) and no longer renders as a badge on the
+  pair card. It is an absolute score produced by a model that saw one item
+  and could not see the other thirty-two — the design doc calls it the
+  weakest field on the artifact — and a red P0 beside a grey P2 anchors
+  the comparison exactly as hard as points would. `work_type` stays: it is
+  a routing fact (which items can go to `branch_author` at all), not a
+  rank. `priority_class/1` survives for CandidateLive, the standalone
+  permalink, which is not a comparison surface.
+
+  ## Discard is permanent, so it does not share the reversible rhythm
+
+  `discard-a`/`discard-b` eject one item from the pool forever and cancel
+  its outstanding queue rows; the five comparison verdicts are all
+  reversible by re-judging. The southern diagonals therefore render in the
+  error palette with an eject glyph, carry a one-line consequence naming
+  what happens to the OTHER side, and need the numpad key pressed TWICE:
+  `armed_discard` holds the first press so that a "digit, space" rhythm
+  cannot eject by muscle memory. The mouse path keeps its single click on
+  a visibly destructive button and picks up a `data-confirm` on Submit —
+  no modal is imposed on the five reversible verdicts.
+
+  ## Skip has exactly one contract
+
+  Skip is a verdict like any other: it is selected, then submitted with
+  whatever confidence and rationale the judge typed. There is no
+  submit-immediately Skip button beside it — two affordances with
+  different mechanics is how a judge loses a rationale they had already
+  written.
   """
   use TournamentUiWeb, :live_view
   alias TournamentUi.{Domains, Judgement, LangfusePrompts}
@@ -80,25 +130,24 @@ defmodule TournamentUiWeb.JudgeLive do
       socket.assigns.active == nil ->
         {:noreply, socket}
 
-      # Number keys → verdict. Wheel templates use NUMPAD GEOMETRY
-      # (7/8/9 = nw/n/ne, 4/6 = w/e, 1/2/3 = sw/s/se — top-row digits
-      # accepted too); non-wheel templates keep the legacy behavior of
-      # indexing into verdict_enum.
       key in ~w(1 2 3 4 5 6 7 8 9) ->
         case wheel_key_verdict(active_rubric(socket), key) do
-          {:wheel, nil} ->
-            {:noreply, socket}
+          {:wheel, nil, nil} ->
+            {:noreply, assign(socket, armed_discard: nil)}
 
-          {:wheel, v} ->
-            {:noreply, assign(socket, chosen_verdict: v, submit_error: nil)}
+          {:wheel, _pos, v} ->
+            {:noreply, pick_wheel_verdict(socket, v)}
 
           :flat ->
             idx = String.to_integer(key) - 1
             verdicts = socket.assigns.active.output_definition["verdict_enum"] || []
 
             case Enum.at(verdicts, idx) do
-              nil -> {:noreply, socket}
-              v -> {:noreply, assign(socket, chosen_verdict: v, submit_error: nil)}
+              nil ->
+                {:noreply, socket}
+
+              v ->
+                {:noreply, pick_wheel_verdict(socket, v)}
             end
         end
 
@@ -118,11 +167,9 @@ defmodule TournamentUiWeb.JudgeLive do
             handle_event("submit_judgement", %{}, socket)
         end
 
-      # S → skip
       key in ["s", "S"] ->
-        handle_event("skip", %{}, socket)
+        {:noreply, select_skip(socket)}
 
-      # J/K or ArrowDown/Up → next/prev pending row
       key in ["j", "J", "ArrowDown"] ->
         {:noreply, move_active(socket, +1)}
 
@@ -145,7 +192,7 @@ defmodule TournamentUiWeb.JudgeLive do
 
   @impl true
   def handle_event("set_verdict", %{"v" => v}, socket) do
-    {:noreply, assign(socket, chosen_verdict: v, submit_error: nil)}
+    {:noreply, assign(socket, chosen_verdict: v, armed_discard: nil, submit_error: nil)}
   end
 
   @impl true
@@ -263,23 +310,24 @@ defmodule TournamentUiWeb.JudgeLive do
     end
   end
 
-  @impl true
-  def handle_event("skip", _params, socket) do
-    case socket.assigns.active do
-      nil ->
-        {:noreply, socket}
+  defp select_skip(socket) do
+    if "skip" in active_rubric(socket).verdict_enum do
+      assign(socket, chosen_verdict: "skip", armed_discard: nil, submit_error: nil)
+    else
+      socket
+    end
+  end
 
-      active ->
-        # "skip" verdict is reserved on every rubric; submit it with mid
-        # confidence and no rationale. (Rubric versioning ensures `skip`
-        # remains a valid verdict.)
-        case Judgement.submit_human(active.id, "skip", "mid", rationale: "(skipped)") do
-          {:ok, _} ->
-            {:noreply, refresh(socket) |> reset_form() |> put_flash(:info, "Skipped.")}
+  defp pick_wheel_verdict(socket, verdict) do
+    cond do
+      not Verdicts.ejects?(verdict) ->
+        assign(socket, chosen_verdict: verdict, armed_discard: nil, submit_error: nil)
 
-          {:error, reason} ->
-            {:noreply, assign(socket, submit_error: to_string(reason))}
-        end
+      socket.assigns.armed_discard == verdict ->
+        assign(socket, chosen_verdict: verdict, armed_discard: nil, submit_error: nil)
+
+      true ->
+        assign(socket, armed_discard: verdict, chosen_verdict: nil, submit_error: nil)
     end
   end
 
@@ -308,23 +356,56 @@ defmodule TournamentUiWeb.JudgeLive do
   end
 
   defp refresh(socket) do
-    pending =
-      Judgement.list_pending(
+    queue =
+      Judgement.open_round_queue(
         rater_type: "human",
         domain: socket.assigns.domain_filter,
         limit: 500
       )
 
+    pending = Enum.map(queue.rows, &scrub_standings/1)
     counts = Judgement.counts(domain: socket.assigns.domain_filter)
 
     socket
     |> assign(
       pending: pending,
+      round_progress: queue.rounds,
       counts: counts,
       db_present: counts.db_present,
       domains: Domains.list()
     )
     |> select_active(pending)
+  end
+
+  @standing_keys ~w(points standing standings rank ranking score scores
+                    matches_played played wins losses draws record
+                    top_group leaderboard)
+
+  @model_self_assessed_keys ~w(priority)
+
+  @absolute_score_keys @standing_keys ++ @model_self_assessed_keys
+
+  defp scrub_standings(row), do: Map.update!(row, :trace_payload, &scrub_value/1)
+
+  defp scrub_value(value) when is_map(value) do
+    value
+    |> Map.drop(@absolute_score_keys)
+    |> Map.new(fn {key, inner} -> {key, scrub_value(inner)} end)
+  end
+
+  defp scrub_value(value) when is_list(value), do: Enum.map(value, &scrub_value/1)
+  defp scrub_value(value), do: value
+
+  defp round_status(nil, _progress), do: nil
+
+  defp round_status(active, progress) do
+    case Map.get(progress, active.tournament_db_path) do
+      %{round: round, remaining: remaining, total: total} ->
+        "round #{round}, #{remaining} of #{total} remaining"
+
+      _ ->
+        nil
+    end
   end
 
   defp select_active(socket, []),
@@ -405,6 +486,7 @@ defmodule TournamentUiWeb.JudgeLive do
       chosen_confidence: "mid",
       rationale: "",
       submit_error: nil,
+      armed_discard: nil,
       subject_index: 0,
       subject_answers: %{}
     )
@@ -417,16 +499,16 @@ defmodule TournamentUiWeb.JudgeLive do
     Verdicts.normalize_rubric((socket.assigns.active || %{})[:output_definition] || %{})
   end
 
-  # Numpad-geometry key handling. :flat → legacy index-into-enum behavior.
   defp wheel_key_verdict(%{wheel: nil}, _key), do: :flat
 
   defp wheel_key_verdict(%{wheel: wheel, kind: kind}, key) do
     pos = Verdicts.numpad_position(key)
 
     cond do
-      pos == nil -> {:wheel, nil}
-      kind == "single" and pos not in Verdicts.axis_positions() -> {:wheel, nil}
-      true -> {:wheel, Map.get(wheel, pos)}
+      pos == nil -> {:wheel, nil, nil}
+      kind == "single" and pos not in Verdicts.axis_positions() -> {:wheel, nil, nil}
+      Map.get(wheel, pos) == nil -> {:wheel, nil, nil}
+      true -> {:wheel, pos, Map.get(wheel, pos)}
     end
   end
 
@@ -456,7 +538,7 @@ defmodule TournamentUiWeb.JudgeLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <.workspace_split current={:judge} id="judge-shell" phx-hook="JudgeShortcuts">
+    <.workspace_split current={:judge} flash={@flash} id="judge-shell" phx-hook="JudgeShortcuts">
       <%!-- Contract §7: no sidebar during judging. The queue picker, domain
             selector, counts, and Results link the old w-80 aside carried
             move into this full-width header bar; the queue itself becomes a
@@ -488,6 +570,13 @@ defmodule TournamentUiWeb.JudgeLive do
               <% else %>
                 fabric DB missing — run <code class="font-mono">bin/judgement.py init</code>
               <% end %>
+            </p>
+            <p
+              :if={round_status(@active, @round_progress)}
+              id="judge-round-progress"
+              class="text-xs opacity-70 font-mono"
+            >
+              {round_status(@active, @round_progress)}
             </p>
             <.link
               navigate={DomainNav.results_path(@domain_filter)}
@@ -560,6 +649,7 @@ defmodule TournamentUiWeb.JudgeLive do
             chosen_confidence={@chosen_confidence}
             rationale={@rationale}
             submit_error={@submit_error}
+            armed_discard={@armed_discard}
             expanded_candidate={@expanded_candidate}
             subject_index={@subject_index}
             subject_answers={@subject_answers}
@@ -595,6 +685,7 @@ defmodule TournamentUiWeb.JudgeLive do
   attr :chosen_confidence, :string, required: true
   attr :rationale, :string, required: true
   attr :submit_error, :any, required: true
+  attr :armed_discard, :any, required: true
   attr :expanded_candidate, :any, required: true
   attr :subject_index, :integer, required: true
   attr :subject_answers, :map, required: true
@@ -633,6 +724,11 @@ defmodule TournamentUiWeb.JudgeLive do
       |> assign(:active_subject, active_subject)
       |> assign(:multi_subject?, length(rubric.subjects) > 1)
       |> assign(:last_subject?, subject_index == length(rubric.subjects) - 1)
+      |> assign(:wheel_keys, Verdicts.numpad_keys(rubric))
+      |> assign(
+        :eject_notice,
+        Verdicts.eject_consequence(assigns.armed_discard || assigns.chosen_verdict)
+      )
 
     ~H"""
     <header class="px-6 py-4 bg-base-100/80 backdrop-blur border-b app-hairline">
@@ -652,9 +748,6 @@ defmodule TournamentUiWeb.JudgeLive do
               {if @artifact_kind == :work_order, do: "Work orders", else: "Legacy cards"}
             </span>
           </p>
-        </div>
-        <div class="flex gap-2 shrink-0">
-          <button phx-click="skip" class="btn btn-ghost btn-sm">Skip</button>
         </div>
       </div>
     </header>
@@ -878,10 +971,15 @@ defmodule TournamentUiWeb.JudgeLive do
                       type="button"
                       phx-click="set_verdict"
                       phx-value-v={v}
+                      data-destructive={to_string(Verdicts.ejects?(v))}
                       class={[
                         "btn btn-sm justify-start gap-2 normal-case",
-                        @chosen_verdict == v && "btn-primary",
-                        @chosen_verdict != v && "btn-ghost border app-hairline"
+                        @chosen_verdict == v && Verdicts.ejects?(v) && "btn-error",
+                        @chosen_verdict == v && !Verdicts.ejects?(v) && "btn-primary",
+                        @chosen_verdict != v && Verdicts.ejects?(v) &&
+                          "btn-ghost border border-error/50 text-error",
+                        @chosen_verdict != v && !Verdicts.ejects?(v) &&
+                          "btn-ghost border app-hairline"
                       ]}
                     >
                       <span class="text-[10px] font-mono opacity-50 w-4 text-center">{idx + 1}</span>
@@ -891,6 +989,20 @@ defmodule TournamentUiWeb.JudgeLive do
                   <% end %>
                 </div>
             <% end %>
+
+            <p
+              :if={@eject_notice}
+              id="discard-consequence"
+              class="mt-3 flex items-start gap-1.5 text-xs text-error"
+            >
+              <.icon name="hero-exclamation-triangle" class="size-3.5 shrink-0 mt-0.5" />
+              <span>
+                {@eject_notice}
+                <span :if={@armed_discard} id="discard-armed" class="font-semibold">
+                  Armed — press the same key again to choose it.
+                </span>
+              </span>
+            </p>
           </div>
 
           <div>
@@ -935,10 +1047,10 @@ defmodule TournamentUiWeb.JudgeLive do
           <div class="flex items-center justify-between gap-3 pt-2 border-t app-hairline">
             <div class="text-xs opacity-50 font-mono">
               <%= if @rubric.wheel do %>
-                <span class="kbd kbd-xs">1-9</span>
+                <span class="kbd kbd-xs">{@wheel_keys}</span>
                 compass (numpad) · <span class="kbd kbd-xs">space</span>
                 submit · <span class="kbd kbd-xs">S</span>
-                skip · <span class="kbd kbd-xs">J</span>/<span class="kbd kbd-xs">K</span> nav
+                skip · <span class="kbd kbd-xs">J</span>/<span class="kbd kbd-xs">K</span> nav · an eject key must be pressed twice
               <% else %>
                 <span class="kbd kbd-xs">1-{length(@active.output_definition["verdict_enum"])}</span>
                 verdict · <span class="kbd kbd-xs">space</span>
@@ -965,8 +1077,18 @@ defmodule TournamentUiWeb.JudgeLive do
                   Next subject →
                 </button>
               <% else %>
-                <button type="submit" class="btn btn-primary btn-sm" disabled={!@chosen_verdict}>
-                  Submit
+                <button
+                  type="submit"
+                  id="judge-submit"
+                  class={[
+                    "btn btn-sm",
+                    @eject_notice && !@armed_discard && "btn-error",
+                    !(@eject_notice && !@armed_discard) && "btn-primary"
+                  ]}
+                  data-confirm={@eject_notice && !@armed_discard && @eject_notice}
+                  disabled={!@chosen_verdict}
+                >
+                  {if @eject_notice && !@armed_discard, do: "Eject and continue", else: "Submit"}
                 </button>
               <% end %>
             </div>
@@ -985,20 +1107,15 @@ defmodule TournamentUiWeb.JudgeLive do
 
   defp judge_item_card(assigns) do
     ~H"""
-    <div class="app-card p-4 min-h-40">
+    <div class="app-card p-4 min-h-40" id={"judge-card-#{@side}"}>
       <div class="flex items-center gap-2 mb-2">
         <div class="text-xs uppercase tracking-widest opacity-60">{@label}</div>
-        <%= if @item[:work_order] do %>
-          <span class={[
-            "text-[10px] font-semibold px-1.5 py-0.5 rounded",
-            priority_class(@item.work_order["priority"])
-          ]}>
-            {@item.work_order["priority"]}
-          </span>
-          <span class="text-[10px] px-1.5 py-0.5 rounded bg-base-200 opacity-70">
-            {@item.work_order["work_type"]}
-          </span>
-        <% end %>
+        <span
+          :if={@item[:work_order]}
+          class="text-[10px] px-1.5 py-0.5 rounded bg-base-200 opacity-70"
+        >
+          {@item.work_order["work_type"]}
+        </span>
         <div class="ml-auto flex items-center gap-1">
           <button
             :if={@item.present? and not @expanded}
@@ -1066,7 +1183,12 @@ defmodule TournamentUiWeb.JudgeLive do
     """
   end
 
-  @doc "Priority badge class — shared with CandidateLive."
+  @doc """
+  Priority badge class — used by CandidateLive, the standalone permalink.
+
+  Deliberately NOT used on /judge: the self-assessed priority is an
+  absolute score and the comparison surface shows no score at all.
+  """
   def priority_class("P0"), do: "bg-error/20 text-error"
   def priority_class("P1"), do: "bg-warning/20 text-warning"
   def priority_class(_), do: "bg-base-200 opacity-70"
@@ -1237,23 +1359,23 @@ defmodule TournamentUiWeb.JudgeLive do
     end
   end
 
-  defp verdict_glyph("a-clearly-better"), do: "⬅︎⬅︎"
-  defp verdict_glyph("a-marginally-better"), do: "⬅︎"
-  defp verdict_glyph("tie-both-strong"), do: "≡+"
-  defp verdict_glyph("tie-both-weak"), do: "≡-"
-  defp verdict_glyph("b-marginally-better"), do: "➡︎"
-  defp verdict_glyph("b-clearly-better"), do: "➡︎➡︎"
-  defp verdict_glyph("incoherent"), do: "✗"
+  defp verdict_glyph("a-wins-big"), do: "⬅︎⬅︎"
+  defp verdict_glyph("a-wins"), do: "⬅︎"
+  defp verdict_glyph("tie"), do: "≡"
+  defp verdict_glyph("b-wins"), do: "➡︎"
+  defp verdict_glyph("b-wins-big"), do: "➡︎➡︎"
+  defp verdict_glyph("discard-a"), do: "✕A"
+  defp verdict_glyph("discard-b"), do: "✕B"
   defp verdict_glyph("skip"), do: "↻"
   defp verdict_glyph(_), do: "•"
 
-  defp verdict_label("a-clearly-better"), do: "Input 1 (clearly)"
-  defp verdict_label("a-marginally-better"), do: "Input 1 (marginally)"
-  defp verdict_label("tie-both-strong"), do: "Tie — both strong"
-  defp verdict_label("tie-both-weak"), do: "Tie — both weak"
-  defp verdict_label("b-marginally-better"), do: "Input 2 (marginally)"
-  defp verdict_label("b-clearly-better"), do: "Input 2 (clearly)"
-  defp verdict_label("incoherent"), do: "Incoherent"
-  defp verdict_label("skip"), do: "Skip"
+  defp verdict_label("a-wins-big"), do: "Input 1 (clearly)"
+  defp verdict_label("a-wins"), do: "Input 1 (marginally)"
+  defp verdict_label("tie"), do: "Tie — order does not matter"
+  defp verdict_label("b-wins"), do: "Input 2 (marginally)"
+  defp verdict_label("b-wins-big"), do: "Input 2 (clearly)"
+  defp verdict_label("discard-a"), do: "Eject input 1 from the pool"
+  defp verdict_label("discard-b"), do: "Eject input 2 from the pool"
+  defp verdict_label("skip"), do: "Skip — establishes nothing"
   defp verdict_label(other), do: other
 end

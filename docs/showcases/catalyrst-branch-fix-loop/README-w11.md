@@ -1,7 +1,7 @@
 # Wave-11: the branch-fix loop, live-agent authored, strict causal order
 
 SUPERSEDES the wave-10 conclusion below/in git history. Same repo
-(https://github.com/eordano/catalyrst @ 009d0fe), same defect, but this
+(https://github.com/YOUR_ORG/catalyrst @ 009d0fe), same defect, but this
 run closes every honesty gap wave-10 disclosed:
 
   wave-10 limitation                ->  wave-11 status
@@ -71,7 +71,7 @@ tokens) · REAL TEMPORAL · FIXTURE (labeled) · DRY-RUN · CREDENTIAL-GATED.
    the agent's patch + COMMAND provenance chip + approve; B/C have no
    decision path. A approved -> review row @ 3d2b3b27 + audit event 1.
 9  SHIP [REAL LOCAL -> REAL TEMPORAL]  gateway-only; canonical repo
-   identity eordano/catalyrst derived from origin URL; branch ->
+   identity YOUR_ORG/catalyrst derived from origin URL; branch ->
    'shipping' + immutable fix_branch_ship row. B/C: zero workflow runs.
 10 RELEASE [REAL TEMPORAL + REAL HUMAN]  one-click approve on /runs
    (audit event 2 + CONFIRMED delivery — no banner, no manual

@@ -44,7 +44,8 @@ defmodule TournamentUiWeb.CampaignsLive do
        hub: nil,
        projects: [],
        form: to_form(new_campaign_params(), as: :campaign),
-       create_error: nil
+       create_error: nil,
+       round_error: nil
      )}
   end
 
@@ -80,28 +81,105 @@ defmodule TournamentUiWeb.CampaignsLive do
     end
   end
 
-  defp create_via_cli(socket, name, project, kind, params) do
-    [cmd | pre_args] = String.split(cli_cmd(), " ", trim: true)
+  def handle_event("open_round", _params, socket) do
+    round_cli(socket, ["open-round", "--campaign", socket.assigns.campaign_name], "Round opened.")
+  end
+
+  def handle_event("close_round", _params, socket) do
+    round_cli(
+      socket,
+      ["close-round", "--campaign", socket.assigns.campaign_name],
+      "Round closed."
+    )
+  end
+
+  def handle_event("ingest_spec", _params, socket) do
+    round_cli(
+      socket,
+      ["ingest-from-spec", "--campaign", socket.assigns.campaign_name],
+      "Signals collected from the sweep spec's corpus."
+    )
+  end
+
+  def handle_event("dispose", %{"dispose" => params}, socket) do
+    args = [
+      "dispose-finding",
+      "--campaign",
+      socket.assigns.campaign_name,
+      "--slug",
+      params["slug"] || "",
+      "--decision",
+      params["decision"] || "",
+      "--rationale",
+      params["rationale"] || ""
+    ]
 
     args =
-      pre_args ++
-        [
-          "create-campaign",
-          "--project",
-          project,
-          "--name",
-          name,
-          "--kind",
-          kind,
-          "--objective",
-          params["objective"] || "",
-          "--time-window",
-          params["time_window"] || "",
-          "--base-commit",
-          params["base_commit"] || ""
-        ]
+      if params["decision"] == "no_go",
+        do: args ++ ["--no-go-reason", params["no_go_reason"] || ""],
+        else: args
 
-    case System.cmd(cmd, args, stderr_to_stdout: true, cd: repo_root()) do
+    round_cli(socket, args, "Disposition recorded.")
+  end
+
+  def handle_event("add_verdict", %{"verdict" => params}, socket) do
+    round_cli(
+      socket,
+      [
+        "add-lens-verdict",
+        "--campaign",
+        socket.assigns.campaign_name,
+        "--slug",
+        params["slug"] || "",
+        "--lens",
+        params["lens"] || "",
+        "--verdict",
+        params["kind"] || "",
+        "--rationale",
+        params["rationale"] || ""
+      ],
+      "Verdict recorded."
+    )
+  end
+
+  defp create_via_cli(socket, name, project, kind, params) do
+    spec_json = String.trim(params["spec_json"] || "")
+
+    {spec_args, spec_cleanup} =
+      if spec_json == "" do
+        {[], fn -> :ok end}
+      else
+        path =
+          Path.join(
+            System.tmp_dir!(),
+            "sweep-spec-#{System.unique_integer([:positive])}.json"
+          )
+
+        File.write!(path, spec_json)
+        {["--spec-file", path], fn -> File.rm(path) end}
+      end
+
+    args =
+      [
+        "create-campaign",
+        "--project",
+        project,
+        "--name",
+        name,
+        "--kind",
+        kind,
+        "--objective",
+        params["objective"] || "",
+        "--time-window",
+        params["time_window"] || "",
+        "--base-commit",
+        params["base_commit"] || ""
+      ] ++ spec_args
+
+    result = run_cli(args)
+    spec_cleanup.()
+
+    case result do
       {_, 0} ->
         {:noreply,
          socket
@@ -115,6 +193,36 @@ defmodule TournamentUiWeb.CampaignsLive do
     end
   end
 
+  defp run_cli(args) do
+    [cmd | pre_args] = String.split(cli_cmd(), " ", trim: true)
+    System.cmd(cmd, pre_args ++ args, stderr_to_stdout: true, cd: repo_root())
+  end
+
+  defp round_cli(socket, args, ok_message) do
+    case run_cli(args) do
+      {_, 0} ->
+        {:noreply, socket |> assign(round_error: nil) |> put_flash(:info, ok_message) |> load()}
+
+      {output, status} ->
+        {:noreply,
+         socket
+         |> assign(
+           round_error: "Round action failed (exit #{status}): #{last_error_line(output)}"
+         )
+         |> load()}
+    end
+  end
+
+  # The CLI fails with a Python traceback; the message on its last line is
+  # the operator-facing rule ("round 1 incomplete: no verdict from …").
+  defp last_error_line(output) do
+    output
+    |> String.trim()
+    |> String.split("\n")
+    |> List.last()
+    |> String.replace(~r/^\w+(\.\w+)*Error: /, "")
+  end
+
   defp new_campaign_params do
     %{
       "name" => "",
@@ -122,7 +230,8 @@ defmodule TournamentUiWeb.CampaignsLive do
       "objective" => "",
       "project" => "",
       "time_window" => "",
-      "base_commit" => ""
+      "base_commit" => "",
+      "spec_json" => ""
     }
   end
 
@@ -145,6 +254,7 @@ defmodule TournamentUiWeb.CampaignsLive do
     ~H"""
     <.workspace_page
       current={:campaigns}
+      flash={@flash}
       title={@campaign_name}
       subtitle="Campaign ledger: one row per finding."
     >
@@ -175,6 +285,228 @@ defmodule TournamentUiWeb.CampaignsLive do
             <p :if={@campaign.objective != ""} class="text-sm opacity-70 mt-2">
               {@campaign.objective}
             </p>
+          </section>
+
+          <section :if={@campaign.spec} class="app-card p-5" id="campaign-spec">
+            <div class="flex items-baseline gap-2 mb-3">
+              <h2 class="text-xs uppercase tracking-widest opacity-60">Sweep spec</h2>
+              <span
+                :if={@campaign.spec_digest}
+                class="font-mono text-[11px] opacity-40"
+                title="spec digest (frozen at creation)"
+              >
+                {String.slice(@campaign.spec_digest, 0, 12)}
+              </span>
+            </div>
+            <div class="grid gap-x-6 gap-y-1 sm:grid-cols-2 text-sm">
+              <div>
+                <span class="opacity-50 text-xs">panel</span>
+                <span class="font-mono ml-2">{spec_lens_line(@campaign.spec)}</span>
+              </div>
+              <div>
+                <span class="opacity-50 text-xs">rounds</span>
+                <span class="font-mono ml-2">{spec_rounds_line(@campaign.spec)}</span>
+              </div>
+              <div>
+                <span class="opacity-50 text-xs">validation</span>
+                <span class="font-mono ml-2">{get_in(@campaign.spec, ["validation", "mode"])}</span>
+              </div>
+              <div>
+                <span class="opacity-50 text-xs">publish</span>
+                <span class="font-mono ml-2">
+                  {get_in(@campaign.spec, ["publish", "gate"])} · {get_in(
+                    @campaign.spec,
+                    ["publish", "granularity"]
+                  )}
+                </span>
+              </div>
+              <div>
+                <span class="opacity-50 text-xs">runner</span>
+                <span class="font-mono ml-2">{runner_line(@campaign.spec)}</span>
+              </div>
+            </div>
+            <details class="mt-2">
+              <summary class="text-xs opacity-50 cursor-pointer">full spec JSON</summary>
+              <pre class="text-xs font-mono overflow-x-auto mt-2 opacity-80">{Jason.encode!(@campaign.spec, pretty: true)}</pre>
+            </details>
+          </section>
+
+          <section
+            :if={@campaign.spec || @campaign.rounds != []}
+            class="app-card p-5"
+            id="campaign-rounds"
+          >
+            <div class="flex items-baseline gap-2 mb-3">
+              <h2 class="text-xs uppercase tracking-widest opacity-60">Review rounds</h2>
+              <span class="text-xs font-mono opacity-40">
+                {length(@campaign.rounds)}
+                <%= if @campaign.spec do %>
+                  /{get_in(
+                    @campaign.spec,
+                    ["rounds", "max"]
+                  )}
+                <% end %>
+              </span>
+              <span :if={converged_round(@campaign.rounds)} class="text-[11px] text-success">
+                converged at round {converged_round(@campaign.rounds)}
+              </span>
+            </div>
+            <div :if={@round_error} class="alert alert-error text-sm mb-3" id="round-error">
+              {@round_error}
+            </div>
+            <%= if @campaign.rounds == [] do %>
+              <p class="text-sm opacity-60" id="rounds-empty">
+                No review round yet — open one to start the batched lens review.
+              </p>
+            <% else %>
+              <ol class="space-y-2">
+                <li
+                  :for={r <- @campaign.rounds}
+                  class="flex items-center gap-3 flex-wrap text-sm"
+                  id={"round-#{r.round_no}"}
+                >
+                  <span class="font-mono font-semibold">R{r.round_no}</span>
+                  <span class={[
+                    "text-[11px] font-medium px-2 py-0.5 rounded-full",
+                    round_chip_class(r)
+                  ]}>
+                    {r.outcome || r.status}
+                  </span>
+                  <span class="text-xs font-mono opacity-70">{round_lens_line(r.summary)}</span>
+                  <span :if={r.dataset_run_id != ""} class="text-xs opacity-40">
+                    run {r.dataset_run_id}
+                  </span>
+                  <span class="text-xs opacity-40 ml-auto">
+                    {r.opened_at}
+                    <%= if r.closed_at do %>
+                      → {r.closed_at}
+                    <% end %>
+                  </span>
+                </li>
+              </ol>
+            <% end %>
+            <div :if={@campaign.status == "active"} class="flex gap-2 mt-3">
+              <button
+                :if={
+                  !Enum.any?(@campaign.rounds, &(&1.status == "open")) &&
+                    !rounds_exhausted?(@campaign)
+                }
+                phx-click="open_round"
+                class="btn btn-outline btn-sm"
+                id="open-round-button"
+              >
+                Open round {length(@campaign.rounds) + 1}
+              </button>
+              <button
+                :if={Enum.any?(@campaign.rounds, &(&1.status == "open"))}
+                phx-click="close_round"
+                class="btn btn-outline btn-sm"
+                id="close-round-button"
+              >
+                Close round
+              </button>
+              <span
+                :if={rounds_exhausted?(@campaign) && !converged_round(@campaign.rounds)}
+                class="text-xs opacity-55 self-center"
+              >
+                rounds.max reached — close out with a terminal decision
+              </span>
+              <span
+                :if={rounds_exhausted?(@campaign) && converged_round(@campaign.rounds)}
+                class="text-xs opacity-55 self-center"
+              >
+                converged — the sweep is ready to close
+              </span>
+            </div>
+            <form
+              :if={tie_break_needed?(@campaign)}
+              phx-submit="dispose"
+              class="mt-3 pt-3 border-t border-base-200 grid gap-2 sm:grid-cols-5 items-end"
+              id="disposition-form"
+            >
+              <label class="form-control">
+                <span class="text-[11px] uppercase tracking-wide opacity-50">Finding</span>
+                <select name="dispose[slug]" class="select select-bordered select-sm font-mono">
+                  <option :for={f <- undisposed_findings(@campaign)} value={f.slug}>
+                    {f.slug}
+                  </option>
+                </select>
+              </label>
+              <label class="form-control">
+                <span class="text-[11px] uppercase tracking-wide opacity-50">Decision</span>
+                <select name="dispose[decision]" class="select select-bordered select-sm font-mono">
+                  <option value="ship_anyway">ship_anyway</option>
+                  <option value="needs_fix">needs_fix</option>
+                  <option value="no_go">no_go</option>
+                </select>
+              </label>
+              <label class="form-control">
+                <span class="text-[11px] uppercase tracking-wide opacity-50">No-go reason</span>
+                <select
+                  name="dispose[no_go_reason]"
+                  class="select select-bordered select-sm font-mono"
+                >
+                  <option value="already-fixed">already-fixed</option>
+                  <option value="wrong-repo">wrong-repo</option>
+                  <option value="by-design">by-design</option>
+                  <option value="stale-signal">stale-signal</option>
+                  <option value="insufficient-evidence">insufficient-evidence</option>
+                </select>
+              </label>
+              <label class="form-control">
+                <span class="text-[11px] uppercase tracking-wide opacity-50">Rationale</span>
+                <input
+                  type="text"
+                  name="dispose[rationale]"
+                  class="input input-bordered input-sm"
+                  placeholder="required — why this call"
+                />
+              </label>
+              <button type="submit" class="btn btn-outline btn-sm" id="dispose-button">
+                Record disposition
+              </button>
+            </form>
+            <form
+              :if={
+                Enum.any?(@campaign.rounds, &(&1.status == "open")) &&
+                  @campaign.findings != [] && spec_lens_names(@campaign.spec) != []
+              }
+              phx-submit="add_verdict"
+              class="mt-3 pt-3 border-t border-base-200 grid gap-2 sm:grid-cols-5 items-end"
+              id="lens-verdict-form"
+            >
+              <label class="form-control">
+                <span class="text-[11px] uppercase tracking-wide opacity-50">Finding</span>
+                <select name="verdict[slug]" class="select select-bordered select-sm font-mono">
+                  <option :for={f <- @campaign.findings} value={f.slug}>{f.slug}</option>
+                </select>
+              </label>
+              <label class="form-control">
+                <span class="text-[11px] uppercase tracking-wide opacity-50">Lens</span>
+                <select name="verdict[lens]" class="select select-bordered select-sm font-mono">
+                  <option :for={l <- spec_lens_names(@campaign.spec)} value={l}>{l}</option>
+                </select>
+              </label>
+              <label class="form-control">
+                <span class="text-[11px] uppercase tracking-wide opacity-50">Verdict</span>
+                <select name="verdict[kind]" class="select select-bordered select-sm font-mono">
+                  <option value="CONFIRM">CONFIRM</option>
+                  <option value="REFUTE">REFUTE</option>
+                </select>
+              </label>
+              <label class="form-control">
+                <span class="text-[11px] uppercase tracking-wide opacity-50">Rationale</span>
+                <input
+                  type="text"
+                  name="verdict[rationale]"
+                  class="input input-bordered input-sm"
+                  placeholder="why"
+                />
+              </label>
+              <button type="submit" class="btn btn-outline btn-sm" id="add-verdict-button">
+                Record verdict
+              </button>
+            </form>
           </section>
 
           <div class="flex items-center gap-2 flex-wrap" id="campaign-cta-row">
@@ -216,11 +548,23 @@ defmodule TournamentUiWeb.CampaignsLive do
             <div class="flex items-baseline gap-2 mb-3">
               <h2 class="text-xs uppercase tracking-widest opacity-60">Ledger</h2>
               <span class="text-xs font-mono opacity-40">{length(@campaign.findings)}</span>
+              <button
+                :if={@campaign.spec && @campaign.status == "active"}
+                phx-click="ingest_spec"
+                class="btn btn-outline btn-xs ml-auto"
+                id="ingest-spec-button"
+              >
+                Collect signals
+              </button>
             </div>
             <%= if @campaign.findings == [] do %>
               <p class="text-sm opacity-60" id="ledger-empty">
-                No findings yet. Findings appear as signals are triaged into
-                this campaign.
+                No findings yet.
+                <%= if @campaign.spec do %>
+                  Collect signals to mint candidates from the sweep spec's corpus.
+                <% else %>
+                  Findings appear as signals are triaged into this campaign.
+                <% end %>
               </p>
             <% else %>
               <div class="overflow-x-auto">
@@ -239,7 +583,16 @@ defmodule TournamentUiWeb.CampaignsLive do
                     <tr :for={f <- @campaign.findings} id={"finding-#{f.slug}"}>
                       <td class="font-mono text-sm font-semibold">{f.slug}</td>
                       <td class="text-xs opacity-70">{f.source_kind}</td>
-                      <td><.finding_state_chip state={f.state} no_go_reason={f.no_go_reason} /></td>
+                      <td>
+                        <.finding_state_chip state={f.state} no_go_reason={f.no_go_reason} />
+                        <span
+                          :if={@campaign.dispositions[f.slug]}
+                          class="text-[11px] font-medium px-2 py-0.5 rounded-full bg-warning/20 text-warning whitespace-nowrap"
+                          title={@campaign.dispositions[f.slug].rationale}
+                        >
+                          ⚖ {@campaign.dispositions[f.slug].decision}
+                        </span>
+                      </td>
                       <td class="text-xs opacity-70 max-w-xs truncate" title={f.root_cause}>
                         {f.root_cause}
                       </td>
@@ -396,8 +749,9 @@ defmodule TournamentUiWeb.CampaignsLive do
     ~H"""
     <.workspace_page
       current={:campaigns}
+      flash={@flash}
       title="Campaigns"
-      subtitle="Bugsweep and release campaigns: a pin, an objective, and a ledger of findings."
+      subtitle="Sweeps (bugs, perf, features, hot-or-slop) and release campaigns: a pin, a spec, and a ledger of findings."
     >
       <div class="space-y-6">
         <%= if @campaigns == [] do %>
@@ -474,7 +828,7 @@ defmodule TournamentUiWeb.CampaignsLive do
                 field={@form[:kind]}
                 type="select"
                 label="Kind"
-                options={["bugsweep", "release"]}
+                options={["bugsweep", "perfsweep", "featuresweep", "slopsweep", "release"]}
               />
               <.input
                 field={@form[:objective]}
@@ -495,6 +849,20 @@ defmodule TournamentUiWeb.CampaignsLive do
                 placeholder="pin sha"
               />
               <div class="sm:col-span-2">
+                <.input
+                  field={@form[:spec_json]}
+                  type="textarea"
+                  label="Sweep spec JSON (optional)"
+                  placeholder="paste a SweepSpec — see configs/sweeps/*.json for full examples"
+                />
+                <p class="text-xs opacity-55 mt-1">
+                  or compose it visually in the
+                  <.link navigate="/designer" class="link" id="open-designer-link">
+                    sweep designer
+                  </.link>
+                </p>
+              </div>
+              <div class="sm:col-span-2">
                 <button type="submit" class="btn btn-primary btn-sm" id="create-campaign-button">
                   Create campaign
                 </button>
@@ -511,6 +879,76 @@ defmodule TournamentUiWeb.CampaignsLive do
     counts
     |> Enum.sort()
     |> Enum.map_join(" · ", fn {state, n} -> "#{state} #{n}" end)
+  end
+
+  defp rounds_exhausted?(campaign) do
+    max = get_in(campaign.spec || %{}, ["rounds", "max"])
+    is_integer(max) && length(campaign.rounds) >= max
+  end
+
+  # The human tie-break case: cap reached, last round not converged, and
+  # at least one open finding still lacks a disposition.
+  defp tie_break_needed?(campaign) do
+    campaign.status == "active" &&
+      rounds_exhausted?(campaign) &&
+      match?(%{outcome: "not_converged"}, List.last(campaign.rounds)) &&
+      undisposed_findings(campaign) != []
+  end
+
+  @terminal_states ~w(confirmed_validated failed_infra no_go)
+
+  defp undisposed_findings(campaign) do
+    Enum.reject(campaign.findings, fn f ->
+      f.state in @terminal_states || Map.has_key?(campaign.dispositions, f.slug)
+    end)
+  end
+
+  defp runner_line(spec) do
+    case spec["runner"] do
+      %{"driver" => driver} = r ->
+        model = if r["model"] not in [nil, ""], do: " · #{r["model"]}", else: ""
+        "#{driver} · #{r["parallel"]}×#{model}"
+
+      _ ->
+        "manual"
+    end
+  end
+
+  defp spec_lens_names(spec) do
+    (get_in(spec, ["panel", "lenses"]) || []) |> Enum.map(& &1["name"])
+  end
+
+  defp spec_lens_line(spec) do
+    lenses = get_in(spec, ["panel", "lenses"]) || []
+    line = Enum.map_join(lenses, " + ", & &1["name"])
+
+    case get_in(spec, ["panel", "human"]) do
+      %{"required" => true} -> line <> " + human"
+      _ -> line
+    end
+  end
+
+  defp spec_rounds_line(spec) do
+    r = spec["rounds"] || %{}
+    "max #{r["max"]} · #{r["batching"]} batching · #{r["convergence"]}"
+  end
+
+  defp converged_round(rounds) do
+    Enum.find_value(rounds, fn r -> if r.outcome == "converged", do: r.round_no end)
+  end
+
+  defp round_chip_class(%{status: "open"}), do: "bg-info/15 text-info"
+  defp round_chip_class(%{outcome: "converged"}), do: "bg-success/15 text-success"
+  defp round_chip_class(%{outcome: "not_converged"}), do: "bg-warning/20 text-warning"
+  defp round_chip_class(_), do: "bg-base-200 opacity-70"
+
+  defp round_lens_line(summary) do
+    (summary["per_lens"] || %{})
+    |> Enum.sort()
+    |> Enum.map_join(" · ", fn {lens, c} ->
+      repairs = if (c["repairs"] || 0) > 0, do: " +#{c["repairs"]}rep", else: ""
+      "#{lens}: C#{c["CONFIRM"] || 0}/R#{c["REFUTE"] || 0}#{repairs}"
+    end)
   end
 
   # Colon-bearing Temporal workflow ids break path-segment routing on

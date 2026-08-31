@@ -1,36 +1,53 @@
 defmodule TournamentUiWeb.JudgeLiveWheelTest do
   @moduledoc """
   Wave-12 semantic wheel / single axis / subject stepper coverage
-  (docs/design/judgement-wheel-v2.md). Seeds three templates alongside
-  the legacy card-prioritizer-v0 rubric:
+  (docs/design/judgement-wheel-v2.md). Seeds four SYNTHETIC templates, so
+  the component contract is exercised independently of whatever the
+  shipped rubric happens to declare this month:
 
-    * pair-wheel-v1        — kind pair, 8-position wheel, 1 subject
-    * single-execution-v1  — kind single, 4-position axis
-    * pair-wheel-duo-v1    — kind pair, wheel, subjects [idea, execution]
+    * ui-wheel-pair-v1   — kind pair, 8-position wheel, 1 subject
+    * ui-wheel-single-v1 — kind single, 4-position axis
+    * ui-wheel-duo-v1    — kind pair, wheel, subjects [idea, execution]
+    * ui-flat-pair-v1    — kind pair, NO wheel (the legacy flat row)
+
+  Their verdict names are deliberately not the shipped vocabulary: this
+  file is about geometry, and borrowing production verdict names is what
+  made the last rename look like it broke the wheel.
   """
   use TournamentUiWeb.ConnCase
   import Phoenix.LiveViewTest
 
   @wheel %{
-    "n" => "tie-both-important",
-    "ne" => "b-slightly-better",
-    "e" => "b-strongly-better",
-    "se" => "b-lean-both-invalid",
-    "s" => "neither-good",
-    "sw" => "a-lean-both-invalid",
-    "w" => "a-strongly-better",
-    "nw" => "a-slightly-better"
+    "n" => "ui-even",
+    "ne" => "ui-b-slight",
+    "e" => "ui-b-strong",
+    "se" => "ui-b-out",
+    "s" => "ui-both-out",
+    "sw" => "ui-a-out",
+    "w" => "ui-a-strong",
+    "nw" => "ui-a-slight"
   }
 
   @wheel_verdicts [
-    "a-strongly-better",
-    "a-slightly-better",
-    "tie-both-important",
-    "b-slightly-better",
-    "b-strongly-better",
-    "a-lean-both-invalid",
-    "b-lean-both-invalid",
-    "neither-good"
+    "ui-a-strong",
+    "ui-a-slight",
+    "ui-even",
+    "ui-b-slight",
+    "ui-b-strong",
+    "ui-a-out",
+    "ui-b-out",
+    "ui-both-out"
+  ]
+
+  @flat_verdicts [
+    "ui-flat-1",
+    "ui-flat-2",
+    "ui-flat-3",
+    "ui-flat-4",
+    "ui-flat-5",
+    "ui-flat-6",
+    "ui-flat-7",
+    "skip"
   ]
 
   @axis %{
@@ -41,7 +58,9 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
   }
 
   setup do
-    home = "/tmp/dt-judge-wheel-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-judge-wheel-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 
@@ -49,7 +68,7 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
 
     pair_outdef =
       Jason.encode!(%{
-        "verdict_enum" => @wheel_verdicts ++ ["incoherent", "skip"],
+        "verdict_enum" => @wheel_verdicts ++ ["ui-off-wheel", "skip"],
         "confidence_enum" => ["low", "mid", "high"],
         "rationale_required" => false,
         "judgement_kind" => "pair",
@@ -64,6 +83,15 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
         "rationale_required" => false,
         "judgement_kind" => "single",
         "wheel" => @axis
+      })
+
+    flat_outdef =
+      Jason.encode!(%{
+        "verdict_enum" => @flat_verdicts,
+        "confidence_enum" => ["low", "mid", "high"],
+        "rationale_required" => false,
+        "judgement_kind" => "pair",
+        "subjects" => ["execution"]
       })
 
     duo_outdef =
@@ -104,10 +132,6 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
           p._client_factory = lambda: _S()
           import judgement; judgement.init_db()
           db = sqlite3.connect(os.environ['DATA_TOURNAMENTS_HOME'] + '/judgements.db')
-          # Scope to the legacy template — init may seed other human configs.
-          legacy_cfg = db.execute(
-              "SELECT c.id FROM job_configuration c JOIN eval_template t ON t.id = c.template_id "
-              "WHERE c.rater_type='human' AND t.name='card-prioritizer-v0'").fetchone()[0]
 
           def add_template(name, outdef):
               cur = db.execute(
@@ -119,7 +143,8 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
                   (tid,))
               return cur.lastrowid
 
-          # Unique names: init_db already seeds pair-wheel-v1 etc.
+          # Unique names: init_db already seeds pair-wheel-v2 etc.
+          legacy_cfg = add_template('ui-flat-pair-v1', '''#{flat_outdef}''')
           wheel_cfg = add_template('ui-wheel-pair-v1', '''#{pair_outdef}''')
           single_cfg = add_template('ui-wheel-single-v1', '''#{single_outdef}''')
           duo_cfg = add_template('ui-wheel-duo-v1', '''#{duo_outdef}''')
@@ -200,6 +225,52 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
     assert has_element?(live, "#wheel-selected-label", "—")
   end
 
+  test "southern diagonals read as ejections, and due south has no meaning at all", %{conn: conn} do
+    {:ok, live, _html} = live(conn, "/judge")
+    html = select(live, 2)
+
+    assert has_element?(live, "#wheel-sw", "✕A"),
+           "sw ejects A; an arrow there reads as 'A wins, weakly', the opposite"
+
+    assert has_element?(live, "#wheel-se", "✕B")
+
+    refute html =~ "◀▽",
+           "the hollow ▽ is the retired *-lean-both-invalid vocabulary, where the " <>
+             "southern diagonals meant 'the pair is weak'"
+
+    refute html =~ "▶▽"
+
+    assert has_element?(live, "#wheel-n", "≡"), "north is a tie, not an upward preference"
+
+    assert has_element?(live, "#wheel-s", "•"),
+           "the rubric asserts due south stays empty — a template that fills it " <>
+             "anyway must not be handed a glyph that means something"
+
+    assert has_element?(live, "#wheel-legend", "✕ ejects that side for good")
+
+    assert has_element?(live, "#wheel-sw[data-destructive='false']"),
+           "eject dressing is verdict-driven (the engine's discard vocabulary), " <>
+             "never geometry-driven — a synthetic verdict at sw merely scores"
+
+    assert has_element?(live, "#wheel-se[data-destructive='false']")
+  end
+
+  test "numpad_keys advertises the wheel's live digits, not 1-9", %{conn: conn} do
+    alias TournamentUiWeb.JudgeVerdictComponents, as: Verdicts
+
+    {:ok, live, _html} = live(conn, "/judge")
+    html = select(live, 2)
+
+    assert html =~ "1 2 3 4 6 7 8 9",
+           "the synthetic wheel fills all 8 positions, so 5 is its only dead digit"
+
+    assert Verdicts.numpad_keys(%{wheel: Map.delete(@wheel, "s"), kind: "pair"}) ==
+             "1 3 4 6 7 8 9"
+
+    assert Verdicts.numpad_keys(%{wheel: @axis, kind: "single"}) == "2 3 8 9"
+    assert Verdicts.numpad_keys(%{wheel: nil, kind: "pair"}) == ""
+  end
+
   test "legacy template keeps the flat verdict row exactly (regression)", %{conn: conn} do
     {:ok, live, html} = live(conn, "/judge")
     # pending id 1 is active by default (oldest first)
@@ -210,16 +281,16 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
     refute has_element?(live, "#subject-stepper")
 
     # Old selectors intact: number-key labels + flat buttons per enum entry.
-    assert has_element?(live, "button[phx-click='set_verdict'][phx-value-v='a-clearly-better']")
+    assert has_element?(live, "button[phx-click='set_verdict'][phx-value-v='ui-flat-1']")
     assert has_element?(live, "button[phx-click='set_verdict'][phx-value-v='skip']")
     assert html =~ ~r/1-8/
     # Legacy number-key behavior: "1" indexes verdict_enum.
     keyed = render_hook(live, "keydown", %{"key" => "1"})
-    assert keyed =~ "a-clearly-better"
+    assert keyed =~ "ui-flat-1"
     assert keyed =~ "btn-primary"
   end
 
-  test "skip and incoherent render off-wheel as operational buttons", %{conn: conn} do
+  test "enum verdicts off the wheel render as operational buttons", %{conn: conn} do
     {:ok, live, _html} = live(conn, "/judge")
     select(live, 2)
 
@@ -230,12 +301,12 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
 
     assert has_element?(
              live,
-             "#operational-verdicts button#operational-incoherent[phx-value-v='incoherent']"
+             "#operational-verdicts button#operational-ui-off-wheel[phx-value-v='ui-off-wheel']"
            )
 
     # And they are NOT wheel cells.
     refute has_element?(live, "#verdict-wheel button[phx-value-v='skip']")
-    refute has_element?(live, "#verdict-wheel button[phx-value-v='incoherent']")
+    refute has_element?(live, "#verdict-wheel button[phx-value-v='ui-off-wheel']")
   end
 
   test "numpad keys follow wheel geometry: 7 → nw, 2 → s", %{conn: conn} do
@@ -244,7 +315,7 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
 
     html = render_hook(live, "keydown", %{"key" => "7"})
     assert has_element?(live, "#wheel-nw[aria-checked='true']")
-    assert html =~ "a-slightly-better"
+    assert html =~ "ui-a-slight"
 
     render_hook(live, "keydown", %{"key" => "2"})
     assert has_element?(live, "#wheel-s[aria-checked='true']")
@@ -267,7 +338,7 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
 
     assert has_element?(live, "#wheel-w[aria-checked='true']")
     assert has_element?(live, "#wheel-e[aria-checked='false']")
-    assert has_element?(live, "#wheel-selected-label", "a strongly better")
+    assert has_element?(live, "#wheel-selected-label", "ui a strong")
   end
 
   test "single-kind template renders one card + 4-position vertical axis", %{conn: conn} do
@@ -298,6 +369,38 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
     # Numpad geometry still applies on the axis: 8 → n.
     render_hook(live, "keydown", %{"key" => "8"})
     assert has_element?(live, "#axis-n[aria-checked='true']")
+  end
+
+  test "axis rungs never inherit the pair wheel's eject dressing", %{conn: conn} do
+    {:ok, live, _html} = live(conn, "/judge")
+    select(live, 3)
+
+    # se on the axis carries a scoring verdict on a payload with no B:
+    # one click selects it — no arming, no red, no phantom consequence.
+    html = live |> element("#axis-se") |> render_click()
+
+    assert has_element?(live, "#axis-se[aria-checked='true']")
+    refute has_element?(live, "#discard-armed")
+    refute html =~ "Ejects"
+    refute html =~ "Eject and continue"
+    refute html =~ ~s(data-destructive="true")
+
+    # Numpad 3 (→ se) selects directly too; the two-press arm ritual is
+    # reserved for verdicts the engine actually ejects on.
+    render_hook(live, "keydown", %{"key" => "9"})
+    html = render_hook(live, "keydown", %{"key" => "3"})
+    assert has_element?(live, "#axis-se[aria-checked='true']")
+    refute has_element?(live, "#discard-armed")
+    refute html =~ "Ejects"
+
+    # The bottom rung is the worst verdict, but the engine only records a
+    # score row for it — nothing is ejected, so it stays undressed.
+    html = live |> element("#axis-s") |> render_click()
+
+    assert has_element?(live, "#axis-s[aria-checked='true']")
+    refute has_element?(live, "#discard-armed")
+    refute html =~ "Ejects"
+    refute html =~ "Eject and continue"
   end
 
   test "2-subject template steps idea → execution and submits both", %{conn: conn, home: home} do
@@ -354,8 +457,8 @@ defmodule TournamentUiWeb.JudgeLiveWheelTest do
              rows |> Enum.map(&Enum.at(&1, 0)) |> Enum.sort()
 
     verdicts = Map.new(rows, fn [name, value] -> {name, value} end)
-    assert verdicts["judgement.idea.verdict"] == "tie-both-important"
-    assert verdicts["judgement.execution.verdict"] == "a-strongly-better"
+    assert verdicts["judgement.idea.verdict"] == "ui-even"
+    assert verdicts["judgement.execution.verdict"] == "ui-a-strong"
   end
 
   defp collect_rows(conn, stmt) do

@@ -31,21 +31,14 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-
 def _data_home() -> Path:
     return Path(os.environ.get("DATA_TOURNAMENTS_HOME", "/tmp/data-tournaments"))
-
 
 def _db_path() -> Path:
     return _data_home() / "judgements.db"
 
-
 def _now_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-
-
-# ── backup / restore ─────────────────────────────────────────────────────
-
 
 def backup(dest_dir: Path) -> Path:
     """Consistent snapshot of judgements.db + cas/ into one tar.gz.
@@ -67,7 +60,7 @@ def backup(dest_dir: Path) -> Path:
         try:
             dst = sqlite3.connect(str(db_copy))
             try:
-                src.backup(dst)  # online backup API
+                src.backup(dst)
             finally:
                 dst.close()
         finally:
@@ -87,8 +80,6 @@ def backup(dest_dir: Path) -> Path:
         manifest_path = Path(td) / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2))
 
-        # Write to a temp name then rename: a crashed backup never leaves a
-        # plausible-looking partial archive behind.
         tmp_archive = archive.with_suffix(".tmp")
         with tarfile.open(tmp_archive, "w:gz") as tar:
             tar.add(db_copy, arcname="judgements.db")
@@ -97,7 +88,6 @@ def backup(dest_dir: Path) -> Path:
                 tar.add(f, arcname=str(Path("cas") / f.relative_to(cas_root)))
         tmp_archive.rename(archive)
     return archive
-
 
 def restore(archive: Path, dest: Path, *, force: bool = False) -> dict[str, Any]:
     """Restore an archive into ``dest`` (a DATA_TOURNAMENTS_HOME root).
@@ -124,10 +114,6 @@ def restore(archive: Path, dest: Path, *, force: bool = False) -> dict[str, Any]
             f"(manifest {manifest['db_sha256'][:12]}…, actual {actual[:12]}…)"
         )
     return manifest
-
-
-# ── CAS integrity ────────────────────────────────────────────────────────
-
 
 def cas_verify() -> dict[str, Any]:
     """Verify CAS <-> DB consistency (ADR 0002).
@@ -157,7 +143,7 @@ def cas_verify() -> dict[str, Any]:
                     f"SELECT digest, {body_col} IS NULL AS external FROM {table}"
                 ).fetchall()
             except sqlite3.OperationalError:
-                continue  # table absent in an older DB: nothing to verify
+                continue
             for row in rows:
                 if not row["external"]:
                     continue
@@ -188,9 +174,8 @@ def cas_verify() -> dict[str, Any]:
         "ok": not problems,
         "problems": problems,
         "cas_files_scanned": scanned,
-        "orphans": orphans,  # candidates for gc, never auto-deleted here
+        "orphans": orphans,
     }
-
 
 def gc_dry_run() -> dict[str, Any]:
     """ADR 0002 §6: GC is deferred; only a dry-run report exists.
@@ -205,10 +190,6 @@ def gc_dry_run() -> dict[str, Any]:
         "count": len(report["orphans"]),
         "note": "dry-run only; deletion tooling deferred per ADR 0002 §6",
     }
-
-
-# ── CLI ──────────────────────────────────────────────────────────────────
-
 
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
@@ -241,7 +222,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif args.cmd == "gc":
         print(json.dumps(gc_dry_run(), indent=2))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

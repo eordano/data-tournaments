@@ -27,11 +27,6 @@ import os
 
 from temporalio import activity
 
-# NOTE: no sys.path munging and no module-level filesystem calls here — the
-# workflow sandbox may (re)import this module while validating workflow.py,
-# and restricted calls (e.g. pathlib.Path.resolve) abort worker startup.
-# If `bin.release_workflow.activities` is importable at all, the repo root
-# is already on sys.path.
 from bin import workflow_runs
 from bin.release_workflow.models import (
     BuildInfo,
@@ -43,9 +38,6 @@ from bin.release_workflow.models import (
     StageRecord,
     WorkOrderBatch,
 )
-
-# ── projection activities ────────────────────────────────────────────────
-
 
 @activity.defn
 async def record_started(req: ReleaseRequest) -> int:
@@ -76,7 +68,6 @@ async def record_started(req: ReleaseRequest) -> int:
     )
     return run_id
 
-
 @activity.defn
 async def record_stage(rec: StageRecord) -> None:
     """Append one entry to the projection's append-only stage history.
@@ -91,7 +82,6 @@ async def record_stage(rec: StageRecord) -> None:
         rec.run_id, stage=rec.stage, status=rec.status, detail=rec.detail or None
     )
 
-
 @activity.defn
 async def set_run_status(upd: RunStatusUpdate) -> None:
     """Set the projection's coarse status (running / awaiting-approval /
@@ -101,10 +91,6 @@ async def set_run_status(upd: RunStatusUpdate) -> None:
     RETRY POLICY: max 5 attempts, 1s initial, 2.0 backoff.
     """
     workflow_runs.set_status(upd.run_id, upd.status, detail=upd.detail or None)
-
-
-# ── pipeline activities ──────────────────────────────────────────────────
-
 
 @activity.defn
 async def assemble_context(req: ReleaseRequest) -> ReleaseContext:
@@ -175,7 +161,6 @@ async def assemble_context(req: ReleaseRequest) -> ReleaseContext:
         domain=req.domain,
     )
 
-
 @activity.defn
 async def generate_workorders(ctx: ReleaseContext) -> WorkOrderBatch:
     """Run the REAL work-order generation pipeline when a domain is set.
@@ -212,7 +197,6 @@ async def generate_workorders(ctx: ReleaseContext) -> WorkOrderBatch:
         unavailable=out["unavailable"],
     )
 
-
 @activity.defn
 async def judging_gate(batch: WorkOrderBatch) -> JudgeVerdict:
     """Batch-level judging gate with HONEST semantics (was: auto-pass 0.92).
@@ -238,7 +222,6 @@ async def judging_gate(batch: WorkOrderBatch) -> JudgeVerdict:
     )
     return JudgeVerdict(passed=passed, score=score, rationale=rationale)
 
-
 @activity.defn
 async def sandbox_preflight(batch: WorkOrderBatch) -> str:
     """Dry-run the WorkOrders in an isolated sandbox. STUB (wave 6).
@@ -251,7 +234,6 @@ async def sandbox_preflight(batch: WorkOrderBatch) -> str:
     """
     activity.logger.info("sandbox_preflight: %s", batch.summary)
     return "preflight-ok"
-
 
 @activity.defn
 async def build(req: ReleaseRequest) -> BuildInfo:
@@ -288,7 +270,6 @@ async def build(req: ReleaseRequest) -> BuildInfo:
         build_id=f"dry-run-{req.commit[:8]}",
     )
 
-
 @activity.defn
 async def canary(info: BuildInfo) -> CanaryReport:
     """Deploy the build to the canary environment.
@@ -314,7 +295,6 @@ async def canary(info: BuildInfo) -> CanaryReport:
         canary_url="dry-run://canary-not-deployed", healthy=True
     )
 
-
 @activity.defn
 async def check_canary_health(report: CanaryReport) -> bool:
     """Point-in-time canary health check after the monitor window.
@@ -334,7 +314,6 @@ async def check_canary_health(report: CanaryReport) -> bool:
 
         return bool(CanaryMonitor().check(canary_url)["healthy"])
     return report.healthy
-
 
 @activity.defn
 async def promote(info: BuildInfo) -> str:
@@ -370,7 +349,6 @@ async def promote(info: BuildInfo) -> str:
         f"promoted:{info.build_id} "
         "[DRY-RUN — no shipping credentials; nothing was deployed]"
     )
-
 
 @activity.defn
 async def rollback(reason: str) -> str:

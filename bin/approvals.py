@@ -23,7 +23,7 @@ hard-errors (spec T3); the tournament UI routes through Phoenix which
 authenticates a human session.
 
 Policy rule shape (policy.kind='approval', policy.rule JSON):
-    {"approvers": ["esteban", "..."], "scope": "release:*"}
+    {"approvers": ["changeme", "..."], "scope": "release:*"}
 ``scope`` is a glob matched against the temporal_workflow_id.
 """
 from __future__ import annotations
@@ -40,15 +40,12 @@ from typing import Any, Callable, Optional
 APPROVE = "approved"
 REJECT = "rejected"
 
-
 class ApprovalDenied(Exception):
     """Principal missing, unknown, or not allowlisted for this workflow."""
-
 
 def _db_path() -> Path:
     home = Path(os.environ.get("DATA_TOURNAMENTS_HOME", "/tmp/data-tournaments"))
     return home / "judgements.db"
-
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(_db_path()))
@@ -57,15 +54,13 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
-
 def _active_approval_policies(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     try:
         return conn.execute(
             "SELECT id, rule FROM policy WHERE kind='approval' AND status='active'"
         ).fetchall()
     except sqlite3.OperationalError:
-        return []  # older DB without the policy table: fail closed below
-
+        return []
 
 def _scope_matches(workflow_id: str, scope: Any) -> bool:
     """Strict scope matching: only ``*`` and ``?`` glob syntax.
@@ -79,17 +74,16 @@ def _scope_matches(workflow_id: str, scope: Any) -> bool:
     if not isinstance(scope, str) or not scope:
         return False
     if "[" in scope or "]" in scope:
-        return False  # unsupported glob syntax: fail closed
+        return False
     pattern = "^" + re.escape(scope).replace(r"\*", ".*").replace(r"\?", ".") + "$"
     return re.match(pattern, workflow_id) is not None
-
 
 def _valid_approvers(approvers: Any) -> list[str]:
     """Return the approver allowlist iff well-formed, else [] (deny).
 
     Must be a list of non-empty strings. A bare string is rejected —
-    ``principal in "esteban"`` is SUBSTRING matching and would grant
-    'est' against approver 'esteban' (hole found by the Elixir mirror
+    ``principal in "changeme"`` is SUBSTRING matching and would grant
+    'chan' against approver 'changeme' (hole found by the Elixir mirror
     implementation, verified live).
     """
     if not isinstance(approvers, list):
@@ -97,7 +91,6 @@ def _valid_approvers(approvers: Any) -> list[str]:
     if not all(isinstance(a, str) and a.strip() for a in approvers):
         return []
     return approvers
-
 
 def authorize(principal: str, workflow_id: str) -> int:
     """Return the matching policy id, or raise ApprovalDenied.
@@ -125,9 +118,9 @@ def authorize(principal: str, workflow_id: str) -> int:
         try:
             rule = json.loads(row["rule"])
         except (TypeError, ValueError):
-            continue  # malformed rule: never treat as a grant
+            continue
         if not isinstance(rule, dict):
-            continue  # non-object rule (e.g. bare string): never a grant
+            continue
         scope = rule.get("scope", "*")
         approvers = _valid_approvers(rule.get("approvers", []))
         if _scope_matches(workflow_id, scope) and principal in approvers:
@@ -136,7 +129,6 @@ def authorize(principal: str, workflow_id: str) -> int:
         f"principal {principal!r} is not an allowlisted approver for "
         f"{workflow_id!r}"
     )
-
 
 def record_event(
     *,
@@ -161,7 +153,6 @@ def record_event(
     finally:
         conn.close()
 
-
 def list_events(workflow_id: str) -> list[dict[str, Any]]:
     conn = _connect()
     try:
@@ -173,7 +164,6 @@ def list_events(workflow_id: str) -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
-
 
 def submit_decision(
     *,
@@ -190,7 +180,7 @@ def submit_decision(
     production; a fake in tests). Audit is written BEFORE delivery — a
     failed send leaves the recorded intent for operator reconciliation.
     """
-    policy_id = authorize(principal, workflow_id)  # raises ApprovalDenied
+    policy_id = authorize(principal, workflow_id)
     decision = APPROVE if approved else REJECT
     event_id = record_event(
         workflow_id=workflow_id,
@@ -200,14 +190,10 @@ def submit_decision(
         policy_id=policy_id,
     )
     if signal_sender is None:
-        from bin.release_workflow.client import send_approval  # lazy: temporalio
+        from bin.release_workflow.client import send_approval
 
         signal_sender = send_approval
     outcome = signal_sender(workflow_id, approved, principal, reason)
     if inspect.iscoroutine(outcome):
-        # Production sender (client.send_approval) is async; drive it to
-        # completion here. A never-awaited coroutine would mean the audit
-        # row exists but the Signal was silently NOT delivered — caught
-        # live in the wave-6 dry-run.
         asyncio.run(outcome)
     return {"event_id": event_id, "decision": decision, "policy_id": policy_id}

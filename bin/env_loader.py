@@ -16,7 +16,6 @@ import os
 from pathlib import Path
 from typing import Optional
 
-
 def find_dotenv(start: Optional[Path] = None) -> Optional[Path]:
     here = (start or Path(__file__).resolve().parent)
     for d in (here, *here.parents):
@@ -26,7 +25,6 @@ def find_dotenv(start: Optional[Path] = None) -> Optional[Path]:
         if (d / ".git").exists():
             return None
     return None
-
 
 def load_dotenv(start: Optional[Path] = None) -> None:
     path = find_dotenv(start)
@@ -50,6 +48,4 @@ def load_dotenv(start: Optional[Path] = None) -> None:
         if "LANGFUSE_HOST" not in os.environ and "LANGFUSE_BASE_URL" in os.environ:
             os.environ["LANGFUSE_HOST"] = os.environ["LANGFUSE_BASE_URL"]
     except Exception:
-        # Loader failures are non-fatal — code that needs the env will
-        # surface its own missing-env error in context.
         pass

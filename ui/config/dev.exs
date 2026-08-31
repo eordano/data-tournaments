@@ -11,8 +11,8 @@ config :tournament_ui, TournamentUiWeb.Endpoint,
   # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
   # Bind to loopback by default. Set PHX_LISTEN_ALL=1 to bind to 0.0.0.0
   # — required when this host fronts the Phoenix dev server through a
-  # reverse proxy on a different machine (e.g. tournaments.example on
-  # giga proxying to studio over tailnet).
+  # reverse proxy on a different machine (e.g. tournaments.example.com on
+  # a gateway host proxying to this workstation over a private network).
   http: [
     ip:
       if System.get_env("PHX_LISTEN_ALL") in ["1", "true"] do
@@ -25,7 +25,7 @@ config :tournament_ui, TournamentUiWeb.Endpoint,
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
-  secret_key_base: "bqREDACTED
+  secret_key_base: "bqRJanbGWIcjW+Vf35Dllc67BKGSTFnMgczYyv05WiCxqV0gdMXJR6n1zMzKPURu",
   watchers: [
     esbuild: {Esbuild, :install_and_run, [:tournament_ui, ~w(--sourcemap=inline --watch)]},
     tailwind: {Tailwind, :install_and_run, [:tournament_ui, ~w(--watch)]}

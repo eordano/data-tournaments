@@ -17,8 +17,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import hermetic_git_env
+
 from bin import catalog
-from bin.assemble_pack import AssembleError, AssembleResult, assemble
+from bin.assemble_pack import AssembleError, assemble
 from bin.landscape import content_digest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -26,7 +28,6 @@ CLI = REPO_ROOT / "bin" / "assemble_pack.py"
 
 FROZEN_NOW = "2026-08-17T00:00:00+00:00"
 
-# Minimal REST v3 issue payload — external, user-authored → TIER3_EXTERNAL.
 ISSUE_PAYLOAD = {
     "number": 7,
     "title": "Crash on load",
@@ -36,18 +37,8 @@ ISSUE_PAYLOAD = {
     "html_url": "https://github.com/acme/widget/issues/7",
 }
 
-
-# ── throwaway git repo helper (same pattern as test_landscape_adapters) ──
-
-
 def _git_env(home: Path) -> dict:
-    return {
-        "PATH": "/usr/bin:/bin:/usr/local/bin",
-        "HOME": str(home),
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_CONFIG_SYSTEM": "/dev/null",
-    }
-
+    return hermetic_git_env(home)
 
 def _make_repo(root: Path) -> str:
     """Init a repo with one committed file; returns the HEAD sha."""
@@ -73,15 +64,10 @@ def _make_repo(root: Path) -> str:
         env=_git_env(root),
     ).stdout.strip()
 
-
-# ── fixtures ─────────────────────────────────────────────────────────────
-
-
 @pytest.fixture
 def cat(tmp_data_home):
     catalog.init()
     return catalog
-
 
 @pytest.fixture
 def raw(tmp_data_home):
@@ -89,7 +75,6 @@ def raw(tmp_data_home):
     conn.row_factory = sqlite3.Row
     yield conn
     conn.close()
-
 
 @pytest.fixture
 def git_project(cat, tmp_path):
@@ -108,7 +93,6 @@ def git_project(cat, tmp_path):
     )
     return repo, head, sid
 
-
 def _add_github_source(cat) -> int:
     """Tier-3 evidence without network: already-fetched issue payload
     embedded in the source config (github_api adapter parses only)."""
@@ -121,7 +105,6 @@ def _add_github_source(cat) -> int:
         config={"repo": "acme/widget", "issues": [ISSUE_PAYLOAD]},
     )
 
-
 @pytest.fixture
 def frozen_clock(monkeypatch):
     """Pin every adapter timestamp so identical content → identical digests."""
@@ -131,13 +114,8 @@ def frozen_clock(monkeypatch):
     monkeypatch.setattr(github_api, "now_iso", lambda: FROZEN_NOW)
     monkeypatch.setattr(build_snapshot, "now_iso", lambda: FROZEN_NOW)
 
-
 def _count(raw, table: str) -> int:
     return raw.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-
-
-# ── evidence persistence ─────────────────────────────────────────────────
-
 
 class TestEvidencePersistence:
     def test_evidence_rows_carry_source_id_and_tier(self, cat, raw, git_project):
@@ -145,16 +123,13 @@ class TestEvidencePersistence:
         result = assemble("proj", objective="ship v1")
         rows = raw.execute("SELECT * FROM evidence_ref").fetchall()
         assert rows, "no evidence persisted"
-        # git_local: repo state + README.md + 1 commit, all TIER1_SYSTEM
         assert len(rows) == 3
         for r in rows:
             assert r["source_id"] == sid
             assert r["trust_tier"] == 1
             assert r["kind"] == "git_repo"
-        # every persisted digest is linked to the snapshot
         linked = set(catalog.list_snapshot_evidence(result.snapshot_digest))
         assert {r["digest"] for r in rows} == linked
-        # file evidence is pinned to HEAD
         uris = {r["locator"] for r in rows}
         assert any(u.endswith(f"#{head}:README.md") for u in uris)
 
@@ -173,10 +148,6 @@ class TestEvidencePersistence:
         ).fetchall()
         assert [r["source_id"] for r in tier1] == [git_sid]
 
-
-# ── snapshot persistence ─────────────────────────────────────────────────
-
-
 class TestSnapshot:
     def test_snapshot_row_exists_and_digest_matches_manifest(
         self, cat, git_project
@@ -184,8 +155,6 @@ class TestSnapshot:
         result = assemble("proj", objective="ship v1")
         row = catalog.get_landscape_snapshot(result.snapshot_digest)
         manifest = json.loads(row["manifest"])
-        # digest is recomputable from the stored canonical manifest —
-        # the row is citable evidence, not a claim
         assert content_digest(manifest) == result.snapshot_digest
         assert manifest["project"] == "proj"
         assert len(manifest["evidence"]) == 3
@@ -199,10 +168,6 @@ class TestSnapshot:
             catalog.list_snapshot_evidence(result.snapshot_digest)
             == sorted(manifest["evidence"])
         )
-
-
-# ── role shaping ─────────────────────────────────────────────────────────
-
 
 class TestRoleShaping:
     def test_executor_excludes_tier3_judge_flags_it(
@@ -251,10 +216,6 @@ class TestRoleShaping:
         with pytest.raises(ValueError):
             assemble("proj", objective="x", roles=("creator", "auditor"))
 
-
-# ── skipped sources ──────────────────────────────────────────────────────
-
-
 class TestSkippedSources:
     def test_adapterless_kind_is_skipped_with_note(self, cat, raw, git_project):
         ucb_sid = cat.create_source(
@@ -271,7 +232,6 @@ class TestSkippedSources:
         assert skipped.kind == "unity-cloud-build"
         assert "no adapter" in skipped.reason
         assert "main-repo" in result.collected_sources
-        # nothing persisted for the skipped source
         rows = raw.execute(
             "SELECT COUNT(*) FROM evidence_ref WHERE source_id=?", (ucb_sid,)
         ).fetchone()
@@ -288,11 +248,6 @@ class TestSkippedSources:
         with pytest.raises(AssembleError, match="ucb"):
             assemble("proj", objective="ship v1")
 
-    # ── L2 regression: frozen evidence rescues an unusable-config source ──
-    # Baseline showcase run (2026-08-17): intake had frozen 6 evidence_ref
-    # rows, but assembly skipped all 4 sources (empty live config) and fell
-    # back to canned spike data.
-
     def test_empty_config_source_falls_back_to_frozen_evidence(self, cat, raw):
         from bin.landscape import EvidenceRef
 
@@ -300,7 +255,7 @@ class TestSkippedSources:
         sid = cat.create_source(
             project="proj",
             name="sentry-week",
-            kind="sentry-csv",  # no adapter registered in assembly's map
+            kind="sentry-csv",
             locator="fixture://sentry",
             trust_tier=3,
         )
@@ -319,7 +274,6 @@ class TestSkippedSources:
 
         result = assemble("proj", objective="ship v1")
 
-        # Not skipped; the frozen digests are cited by the snapshot.
         assert result.skipped_sources == ()
         assert "sentry-week" in result.collected_sources
         cited = set(cat.list_snapshot_evidence(result.snapshot_digest))
@@ -327,9 +281,6 @@ class TestSkippedSources:
         assert result.evidence_counts.get("tier3_external") == 2
 
     def test_truly_empty_project_still_errors_after_fallback(self, cat):
-        # A source with NO frozen refs and no adapter stays skipped, and a
-        # project where that's every source still fails loudly (no silent
-        # spike-data pack from assemble itself).
         cat.create_project(name="proj", description="")
         cat.create_source(
             project="proj",
@@ -343,10 +294,6 @@ class TestSkippedSources:
     def test_missing_project_raises_lookup(self, cat):
         with pytest.raises(LookupError):
             assemble("nope", objective="x")
-
-
-# ── idempotency ──────────────────────────────────────────────────────────
-
 
 class TestIdempotency:
     def test_rerun_reuses_digests_and_adds_no_rows(
@@ -370,26 +317,20 @@ class TestIdempotency:
         for table, before in counts.items():
             assert _count(raw, table) == before, f"duplicate rows in {table}"
 
-
-# ── CLI ──────────────────────────────────────────────────────────────────
-
-
 def _run_cli(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(CLI), *args],
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
-        env=dict(os.environ),  # carries DATA_TOURNAMENTS_HOME from the fixture
+        env=dict(os.environ),
         timeout=60,
     )
-
 
 def _pack_json(stdout: str) -> dict:
     lines = [l for l in stdout.splitlines() if l.startswith("PACK_JSON: ")]
     assert len(lines) == 1, f"expected one PACK_JSON line, got: {stdout!r}"
     return json.loads(lines[0][len("PACK_JSON: "):])
-
 
 class TestCli:
     def test_end_to_end(self, cat, git_project):
@@ -404,11 +345,9 @@ class TestCli:
         assert payload["project"] == "proj"
         assert set(payload["pack_digests"]) == {"creator", "judge"}
         assert payload["evidence_counts"] == {"tier1_system": 3}
-        # digests in the machine line are real catalog rows
         catalog.get_landscape_snapshot(payload["snapshot_digest"])
         for digest in payload["pack_digests"].values():
             catalog.get_context_pack(digest)
-        # human summary present alongside the machine line
         assert "snapshot: " in proc.stdout
 
     def test_skipped_sources_surface_in_pack_json(self, cat, git_project):

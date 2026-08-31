@@ -14,7 +14,6 @@ import pytest
 
 from bin.approvals import ApprovalDenied
 
-
 @pytest.fixture
 def rules(tmp_data_home):
     from bin import review_rules as mod
@@ -22,13 +21,11 @@ def rules(tmp_data_home):
     mod.init()
     return mod
 
-
 @pytest.fixture
 def catalog(tmp_data_home):
     from bin import catalog as mod
 
     return mod
-
 
 @pytest.fixture
 def raw(tmp_data_home):
@@ -38,7 +35,6 @@ def raw(tmp_data_home):
     conn.execute("PRAGMA foreign_keys = ON")
     yield conn
     conn.close()
-
 
 def _evidence(n: int = 2) -> list[dict]:
     return [
@@ -52,7 +48,6 @@ def _evidence(n: int = 2) -> list[dict]:
         }
         for i in range(n)
     ]
-
 
 def _proposal(rules, **overrides) -> int:
     kwargs = dict(
@@ -77,15 +72,10 @@ def _proposal(rules, **overrides) -> int:
     kwargs.update(overrides)
     return rules.create_proposal(**kwargs)
 
-
-def _policy(catalog, approvers=("esteban",), scope="rule:*", name="rule-gate"):
+def _policy(catalog, approvers=("changeme",), scope="rule:*", name="rule-gate"):
     return catalog.create_policy(
         name=name, kind="approval", rule={"approvers": list(approvers), "scope": scope}
     )
-
-
-# ── init / schema ─────────────────────────────────────────────────────────
-
 
 class TestInit:
     def test_init_twice_is_idempotent(self, rules):
@@ -105,10 +95,6 @@ class TestInit:
         }
         assert "review_rule_immutable" in triggers
         assert "review_rule_no_delete" in triggers
-
-
-# ── Proposal creation: only as strong as its evidence ─────────────────────
-
 
 class TestCreateProposal:
     def test_round_trip(self, rules):
@@ -145,10 +131,6 @@ class TestCreateProposal:
         with pytest.raises(ValueError, match="unknown status"):
             rules.list_proposals(status="shipped")
 
-
-# ── Lifecycle: draft -> evaluated -> versioned; rejected/versioned sticky ─
-
-
 class TestLifecycle:
     def test_record_evaluation_draft_to_evaluated(self, rules):
         pid = _proposal(rules)
@@ -177,14 +159,14 @@ class TestLifecycle:
         _policy(catalog)
         pid = _proposal(rules)
         with pytest.raises(ValueError, match="evaluated"):
-            rules.promote(pid, principal="esteban", name="no-null-bang")
+            rules.promote(pid, principal="changeme", name="no-null-bang")
 
     def test_promote_rejected_fails(self, rules, catalog):
         _policy(catalog)
         pid = _proposal(rules)
         rules.reject(pid, reason="not a real rule")
         with pytest.raises(ValueError, match="evaluated"):
-            rules.promote(pid, principal="esteban", name="no-null-bang")
+            rules.promote(pid, principal="changeme", name="no-null-bang")
 
     def test_reject_requires_reason(self, rules):
         pid = _proposal(rules)
@@ -194,24 +176,24 @@ class TestLifecycle:
     def test_rejected_is_sticky(self, rules):
         pid = _proposal(rules)
         rules.reject(pid, reason="first reason")
-        rules.reject(pid, reason="second reason")  # silent no-op
+        rules.reject(pid, reason="second reason")
         assert rules.get_proposal(pid)["evaluation_result"] == "first reason"
 
     def test_versioned_is_sticky_against_reject(self, rules, catalog):
         _policy(catalog)
         pid = _proposal(rules)
         rules.record_evaluation(pid, evaluated_by="r", result="ok")
-        rules.promote(pid, principal="esteban", name="no-null-bang")
-        rules.reject(pid, reason="too late")  # silent no-op
+        rules.promote(pid, principal="changeme", name="no-null-bang")
+        rules.reject(pid, reason="too late")
         assert rules.get_proposal(pid)["status"] == "versioned"
 
     def test_promote_versioned_again_fails(self, rules, catalog):
         _policy(catalog)
         pid = _proposal(rules)
         rules.record_evaluation(pid, evaluated_by="r", result="ok")
-        rules.promote(pid, principal="esteban", name="no-null-bang")
+        rules.promote(pid, principal="changeme", name="no-null-bang")
         with pytest.raises(ValueError, match="evaluated"):
-            rules.promote(pid, principal="esteban", name="no-null-bang")
+            rules.promote(pid, principal="changeme", name="no-null-bang")
 
     def test_missing_proposal_raises_lookup(self, rules):
         with pytest.raises(LookupError):
@@ -221,23 +203,18 @@ class TestLifecycle:
         with pytest.raises(LookupError):
             rules.reject(999, reason="gone")
 
-
-# ── Promotion gate: fail closed, audit, freeze ────────────────────────────
-
-
 class TestPromotionGate:
     def test_no_policy_fails_closed_with_no_side_effects(self, rules, raw):
         pid = _proposal(rules)
         rules.record_evaluation(pid, evaluated_by="r", result="ok")
         with pytest.raises(ApprovalDenied):
-            rules.promote(pid, principal="esteban", name="no-null-bang")
-        # proposal unchanged, no rule row, no audit row
+            rules.promote(pid, principal="changeme", name="no-null-bang")
         assert rules.get_proposal(pid)["status"] == "evaluated"
         assert raw.execute("SELECT COUNT(*) FROM review_rule").fetchone()[0] == 0
         assert raw.execute("SELECT COUNT(*) FROM approval_event").fetchone()[0] == 0
 
     def test_unlisted_principal_denied(self, rules, catalog, raw):
-        _policy(catalog, approvers=("esteban",))
+        _policy(catalog, approvers=("changeme",))
         pid = _proposal(rules)
         rules.record_evaluation(pid, evaluated_by="r", result="ok")
         with pytest.raises(ApprovalDenied):
@@ -249,42 +226,39 @@ class TestPromotionGate:
         pid = _proposal(rules)
         rules.record_evaluation(pid, evaluated_by="r", result="ok")
         with pytest.raises(ApprovalDenied):
-            rules.promote(pid, principal="esteban", name="no-null-bang")
+            rules.promote(pid, principal="changeme", name="no-null-bang")
 
     def test_promotion_writes_rule_and_audit(self, rules, catalog, raw):
         policy_id = _policy(catalog)
         pid = _proposal(rules)
         rules.record_evaluation(pid, evaluated_by="r", result="ok")
-        out = rules.promote(pid, principal="esteban", name="no-null-bang")
+        out = rules.promote(pid, principal="changeme", name="no-null-bang")
         assert out["version"] == 1
         assert out["policy_id"] == policy_id
-        # immutable rule row, frozen from the proposal
         r = rules.get_rule("no-null-bang", 1)
         assert r["rule_text"].startswith("Never use the null-forgiving")
         assert r["category"] == "nullability"
-        assert r["approved_by"] == "esteban"
+        assert r["approved_by"] == "changeme"
         assert r["proposal_id"] == pid
         assert r["attribution"] == ["reviewer-0", "reviewer-1"]
         assert [e["quote"] for e in r["evidence"]] == [
             "invented reviewer comment #0",
             "invented reviewer comment #1",
         ]
-        # audit row: decision approved, workflow_id rule:<name>:v<n>
         ev = raw.execute(
             "SELECT * FROM approval_event WHERE id=?", (r["approval_event_id"],)
         ).fetchone()
         assert ev["temporal_workflow_id"] == "rule:no-null-bang:v1"
         assert ev["decision"] == "approved"
-        assert ev["approver"] == "esteban"
+        assert ev["approver"] == "changeme"
         assert ev["policy_id"] == policy_id
-        # proposal terminal
         assert rules.get_proposal(pid)["status"] == "versioned"
 
     def test_rule_rows_are_immutable_and_undeletable(self, rules, catalog, raw):
         _policy(catalog)
         pid = _proposal(rules)
         rules.record_evaluation(pid, evaluated_by="r", result="ok")
-        rules.promote(pid, principal="esteban", name="no-null-bang")
+        rules.promote(pid, principal="changeme", name="no-null-bang")
         with pytest.raises(sqlite3.DatabaseError, match="immutable"):
             raw.execute("UPDATE review_rule SET rule_text='weakened'")
         with pytest.raises(sqlite3.DatabaseError, match="append-only"):
@@ -305,10 +279,8 @@ class TestPromotionGate:
         conflicts = ["guide-says-interpolate vs bar-blocks-in-hot-paths"]
         pid = _proposal(rules, dissent=dissent, conflicts_with=conflicts)
         rules.record_evaluation(pid, evaluated_by="r", result="ok")
-        rules.promote(pid, principal="esteban", name="no-null-bang")
-        # dissent frozen verbatim into the rule row
+        rules.promote(pid, principal="changeme", name="no-null-bang")
         assert rules.get_rule("no-null-bang", 1)["dissent"] == dissent
-        # and still present verbatim on the (now versioned) proposal
         p = rules.get_proposal(pid)
         assert p["dissent"] == dissent
         assert p["conflicts_with"] == conflicts
@@ -327,8 +299,6 @@ class TestPromotionGate:
             pid, evaluated_by="retro", result="huge hit count, all real"
         )
         assert raw.execute("SELECT COUNT(*) FROM review_rule").fetchone()[0] == 0
-        # promote() is the only module function whose source inserts into
-        # review_rule; every other lifecycle function cannot.
         import inspect
 
         for fn_name in ("create_proposal", "record_evaluation", "reject"):
@@ -337,22 +307,18 @@ class TestPromotionGate:
         assert "INSERT INTO review_rule(" in inspect.getsource(rules.promote)
         assert "approvals.authorize" in inspect.getsource(rules.promote)
 
-
-# ── Versioning: auto-increment, supersedes chain, active_rules ────────────
-
-
 class TestVersioning:
     def test_auto_increment_and_supersedes_chain(self, rules, catalog):
         _policy(catalog)
         p1 = _proposal(rules)
         rules.record_evaluation(p1, evaluated_by="r", result="ok")
-        out1 = rules.promote(p1, principal="esteban", name="no-null-bang")
+        out1 = rules.promote(p1, principal="changeme", name="no-null-bang")
         assert out1["version"] == 1
 
         p2 = _proposal(rules, rule_text="Never use ! on locals; scoped to src/.")
         rules.record_evaluation(p2, evaluated_by="r2", result="ok")
         out2 = rules.promote(
-            p2, principal="esteban", name="no-null-bang",
+            p2, principal="changeme", name="no-null-bang",
             supersedes="no-null-bang:v1",
         )
         assert out2["version"] == 2
@@ -361,18 +327,17 @@ class TestVersioning:
         assert [h["version"] for h in hist] == [1, 2]
         assert hist[0]["supersedes"] is None
         assert hist[1]["supersedes"] == "no-null-bang:v1"
-        # old version remains (rollback = repoint)
         assert rules.get_rule("no-null-bang", 1)["rule_text"].startswith("Never use the")
 
     def test_explicit_duplicate_version_raises(self, rules, catalog):
         _policy(catalog)
         p1 = _proposal(rules)
         rules.record_evaluation(p1, evaluated_by="r", result="ok")
-        rules.promote(p1, principal="esteban", name="no-null-bang", version=1)
+        rules.promote(p1, principal="changeme", name="no-null-bang", version=1)
         p2 = _proposal(rules)
         rules.record_evaluation(p2, evaluated_by="r", result="ok")
         with pytest.raises(ValueError, match="already exists"):
-            rules.promote(p2, principal="esteban", name="no-null-bang", version=1)
+            rules.promote(p2, principal="changeme", name="no-null-bang", version=1)
 
     def test_active_rules_picks_latest_per_name(self, rules, catalog):
         _policy(catalog)
@@ -380,7 +345,7 @@ class TestVersioning:
             for _ in range(versions):
                 pid = _proposal(rules)
                 rules.record_evaluation(pid, evaluated_by="r", result="ok")
-                rules.promote(pid, principal="esteban", name=name)
+                rules.promote(pid, principal="changeme", name=name)
         active = rules.active_rules()
         assert [(r["name"], r["version"]) for r in active] == [
             ("rule-a", 2), ("rule-b", 1),
@@ -389,10 +354,6 @@ class TestVersioning:
     def test_rule_history_unknown_name_raises(self, rules):
         with pytest.raises(LookupError):
             rules.rule_history("never-promoted")
-
-
-# ── CLI smoke ─────────────────────────────────────────────────────────────
-
 
 class TestCli:
     def test_cli_round_trip(self, rules, catalog, tmp_path, capsys):
@@ -410,10 +371,10 @@ class TestCli:
         rules.record_evaluation(pid, evaluated_by="r", result="ok")
         assert rules.main(["list", "--status", "evaluated"]) == 0
         assert rules.main([
-            "promote", "--id", str(pid), "--principal", "esteban",
+            "promote", "--id", str(pid), "--principal", "changeme",
             "--name", "no-linq-hot",
         ]) == 0
-        capsys.readouterr()  # flush list/promote output
+        capsys.readouterr()
         assert rules.main(["history", "--name", "no-linq-hot"]) == 0
         out = capsys.readouterr().out
         hist = json.loads(out)

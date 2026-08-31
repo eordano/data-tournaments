@@ -46,7 +46,7 @@ defmodule TournamentUiWeb.EnvironmentLiveTest do
       description TEXT NOT NULL DEFAULT '',
       generator_prompt TEXT NOT NULL,
       judge_prompt TEXT NOT NULL,
-      rubric TEXT NOT NULL DEFAULT 'card-prioritizer-v0',
+      rubric TEXT NOT NULL DEFAULT 'pair-wheel-v2',
       corpus_source TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -77,7 +77,9 @@ defmodule TournamentUiWeb.EnvironmentLiveTest do
   end
 
   setup do
-    home = "/tmp/dt-environment-live-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-environment-live-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
     on_exit(fn -> File.rm_rf(home) end)
@@ -145,7 +147,7 @@ defmodule TournamentUiWeb.EnvironmentLiveTest do
         (1, 'release', 1,
          '{"stages": [{"key": "judge", "judgement": "pair", "subject": "execution"},
                       {"key": "ship", "action": "release"}]}',
-         'aabREDACTED
+         'aabbccddeeff00112233');
       INSERT INTO domain (id, name, generator_prompt, judge_prompt, corpus_source)
         VALUES (1, 'wearables-lane', 'gen', 'judge', '{"kind": "static"}');
       INSERT INTO domain_pipeline (domain_id, pipeline_id) VALUES (1, 1);
@@ -171,14 +173,15 @@ defmodule TournamentUiWeb.EnvironmentLiveTest do
       sql!(home, """
       INSERT INTO policy (name, kind, rule, status) VALUES
         ('release-approval', 'approval',
-         '{"scope": "release", "approvers": ["esteban"],
-           "secret_token": "sekreREDACTED         'active');
+         '{"scope": "release", "approvers": ["changeme"],
+           "secret_token": "sekret-rule-value-123"}',
+         'active');
       """)
 
       {:ok, _view, html} = live(conn, "/environment?tab=policies")
 
       assert html =~ ~s(id="policy-release-approval")
-      assert html =~ "esteban"
+      assert html =~ "changeme"
       assert html =~ "release"
       assert html =~ "approval"
       # Rule bodies are parsed for names only and dropped — no JSON dump,
@@ -206,14 +209,17 @@ defmodule TournamentUiWeb.EnvironmentLiveTest do
     test "no DB at all: honest 'not initialized' note, never a fake empty list",
          %{conn: conn} do
       {:ok, _view, html} = live(conn, "/environment?tab=rubrics")
-      assert html =~ ~s(id="env-not-initialized")
+      assert html =~ ~s(id="env-not-initialized-rubrics")
       assert html =~ "not initialized in this data home"
 
+      # The pipelines tab carries TWO of these notes, so they cannot share one
+      # DOM id: LiveView refuses to patch a duplicate.
       {:ok, _view, html} = live(conn, "/environment?tab=pipelines")
-      assert html =~ ~s(id="env-not-initialized")
+      assert html =~ ~s(id="env-not-initialized-pipelines")
+      assert html =~ ~s(id="env-not-initialized-bindings")
 
       {:ok, _view, html} = live(conn, "/environment?tab=policies")
-      assert html =~ ~s(id="env-not-initialized")
+      assert html =~ ~s(id="env-not-initialized-policies")
     end
   end
 

@@ -1,9 +1,9 @@
 Fix is_canonical_cid: enforce exact CIDv1 decoded-length semantics (reject truncated 58-char and oversized CIDs)
 
 **Domain:** catalyrst-cid-w11-workorders · **Created:** 2026-08-17T22:31:13Z · **Priority:** P0 — Ongoing error-level production issue (476 combined events/7d across CATA-2201 and CATA-2230, 70 users). A core correctness gate accepts malformed identifiers, so every downstream consumer pays a verify_hash failure and the server violates content-addressing integrity. · **Type:** bug-fix  
-**Links:** [Repository](https://gitea/usr/data-tournaments)  
+**Links:** [Repository](https://gitea/you/data-tournaments)  
 **Models:** openai/moonshotai/kimi-k3  
-**Repo:** gitea:usr/data-tournaments @ `668ea3a79815` *(dirty working tree)*  
+**Repo:** gitea:you/data-tournaments @ `668ea3a79815` *(dirty working tree)*  
 **Source:** `docs/showcases/catalyrst-branch-fix-loop/fixtures/sentry-cid.csv`  
 **Files (approx.):** `src/cid.rs (or src/validation/cid.rs — approximate; wherever is_canonical_cid lives)`, `src/handlers/get_content.rs`, `src/sync/deploy_remote_entity.rs`, `tests/cid_validation.rs`, `tests/cid_oracle_parity.rs`
 

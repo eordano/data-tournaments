@@ -145,6 +145,7 @@ defmodule TournamentUiWeb.InspectLive do
     ~H"""
     <.workspace_page
       current={:inspect}
+      flash={@flash}
       max_width="max-w-7xl"
       title="Data inspector"
       subtitle="Advanced, read-only troubleshooting for raw domains, queue rows, scores, and prompt metadata."

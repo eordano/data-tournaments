@@ -1,5 +1,5 @@
 issue,created,auto_closed,title,body
 9001,2026-01-15,2026-06-20,Emote wheel stays open after death,"Opening the emote wheel and dying leaves the wheel stuck on screen.
 
-Repro: open wheel, walk into the void. Auth header seen in logs:REDACTED (redact me)."
+Repro: open wheel, walk into the void. Auth header seen in logs: ghp_AUTOFAKEFAKEFAKEFAKE99 (redact me)."
 9002,2026-02-02,2026-07-01,Backpack search ignores diacritics,"Searching for wearables with accented names returns nothing. Still happens on 0.53."

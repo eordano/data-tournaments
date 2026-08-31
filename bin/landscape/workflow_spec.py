@@ -16,7 +16,6 @@ import pydantic
 
 from bin.landscape.canonical import content_digest
 
-
 class StepKind(str, Enum):
     GATHER = "gather"
     RETRIEVE = "retrieve"
@@ -27,10 +26,7 @@ class StepKind(str, Enum):
     DEPLOY = "deploy"
     ROLLBACK = "rollback"
 
-
-# Step kinds that can change the world irreversibly: always gated by a human.
 APPROVAL_REQUIRED_KINDS = frozenset({StepKind.DEPLOY, StepKind.ROLLBACK})
-
 
 class WorkflowStep(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(frozen=True)
@@ -38,7 +34,6 @@ class WorkflowStep(pydantic.BaseModel):
     id: str
     kind: StepKind
     description: str = ""
-    # Capabilities this step is ALLOWED to use (deny-by-default elsewhere).
     capabilities: tuple[str, ...] = ()
     sandbox_profile: Optional[str] = None
     needs_approval: bool = False
@@ -55,7 +50,6 @@ class WorkflowStep(pydantic.BaseModel):
     @pydantic.model_validator(mode="after")
     def _force_approval_for_dangerous_kinds(self) -> "WorkflowStep":
         if self.kind in APPROVAL_REQUIRED_KINDS and not self.needs_approval:
-            # Frozen model: bypass immutability for this validator-time fix-up.
             object.__setattr__(self, "needs_approval", True)
         return self
 
@@ -69,7 +63,6 @@ class WorkflowStep(pydantic.BaseModel):
             "needs_approval": self.needs_approval,
             "depends_on": sorted(self.depends_on),
         }
-
 
 class WorkflowSpec(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(frozen=True)
@@ -98,7 +91,6 @@ class WorkflowSpec(pydantic.BaseModel):
                 raise ValueError(
                     f"step {step.id!r} depends on unknown step(s): {missing}"
                 )
-        # Cycle detection: iterative DFS with three colors.
         deps = {step.id: step.depends_on for step in self.steps}
         WHITE, GRAY, BLACK = 0, 1, 2
         color = dict.fromkeys(deps, WHITE)
@@ -128,10 +120,6 @@ class WorkflowSpec(pydantic.BaseModel):
         return {
             "name": self.name,
             "version": self.version,
-            # Step order is meaningful (presentation/authoring order), so it
-            # is part of the content — dependencies, not order, drive
-            # execution, but two specs listing steps differently are
-            # different documents.
             "steps": [step._content_payload() for step in self.steps],
         }
 

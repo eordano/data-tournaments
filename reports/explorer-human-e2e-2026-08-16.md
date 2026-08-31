@@ -3,7 +3,8 @@
 ## Scope
 
 - Live app: `http://localhost:4000`
-- Domain: `exREDACTED- Corpus: four C# files from `/Users/user/Projects/unity-editor/Explorer`
+- Domain: `explorer-bugs-human-e2e-20260816`
+- Corpus: four C# files from `~/Projects/unity-editor/Explorer`
 - Flow exercised: Start → Domains → Review → Results → Prompts
 - Panel: human reviewer, Kimi K3, GLM 5.2, Claude Opus 5
 

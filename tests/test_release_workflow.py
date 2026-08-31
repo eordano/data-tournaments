@@ -24,20 +24,17 @@ from bin.release_workflow.models import (
     workflow_id_for,
 )
 
-
 def test_workflow_id_convention():
     assert (
         workflow_id_for("decentraland/unity-explorer", "abc123")
         == "release:decentraland/unity-explorer:abc123"
     )
 
-
 def test_release_request_defaults():
     req = ReleaseRequest(repo="r", commit="c")
-    assert req.project == ""  # no catalog project -> canned-data fallback
+    assert req.project == ""
     assert req.approval_timeout_seconds == 24 * 3600
     assert req.monitor_window_seconds == 30 * 60
-
 
 def test_models_importable_without_temporalio():
     """models.py must never grow a temporalio import — the root suite and
@@ -45,7 +42,7 @@ def test_models_importable_without_temporalio():
     import importlib
     import sys
 
-    assert "temporalio" not in sys.modules or True  # informational only
+    assert "temporalio" not in sys.modules or True
     mod = importlib.import_module("bin.release_workflow.models")
     src = (mod.__file__ or "")
     assert src.endswith("models.py")
@@ -54,20 +51,14 @@ def test_models_importable_without_temporalio():
     assert "import temporalio" not in inspect.getsource(mod)
     assert "from temporalio" not in inspect.getsource(mod)
 
-
 def test_stage_record_shape():
     rec = StageRecord(run_id=1, stage="build", status="ok", detail={"x": 1})
     assert (rec.run_id, rec.stage, rec.status, rec.detail) == (1, "build", "ok", {"x": 1})
-
 
 def test_release_result_defaults():
     res = ReleaseResult(status="promoted", reason="ok", repo="r", commit="c")
     assert res.stages == [] and res.approval is None
     assert ApprovalDecision(approved=True, approver="a").reason == ""
-
-
-# ── temporalio-dependent (skip in the dev shell, exercised in spike venv) ──
-
 
 def test_workflow_module_imports_with_temporalio():
     pytest.importorskip("temporalio")
@@ -75,9 +66,7 @@ def test_workflow_module_imports_with_temporalio():
     from bin.release_workflow.worker import ALL_ACTIVITIES
 
     names = {getattr(a, "__name__", "") for a in ALL_ACTIVITIES}
-    # Projection writers must be registered alongside the pipeline stubs.
     assert {"record_started", "record_stage", "set_run_status"} <= names
-
 
 def test_client_module_imports_with_temporalio():
     pytest.importorskip("temporalio")
@@ -86,7 +75,6 @@ def test_client_module_imports_with_temporalio():
     assert callable(client.start_release)
     assert callable(client.get_status)
     assert callable(client.send_approval)
-
 
 def test_start_release_carries_domain_through_to_request():
     """L3 regression: --domain must reach ReleaseRequest so the workflow's
@@ -110,7 +98,7 @@ def test_start_release_carries_domain_through_to_request():
             "abc1234",
             "proj",
             domain="hrb-release-reliability",
-            requested_by="esteban",
+            requested_by="changeme",
             client=_FakeClient(),
         )
     )

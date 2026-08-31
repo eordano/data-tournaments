@@ -17,6 +17,7 @@ from types import ModuleType
 from bin.landscape.adapters import (
     bugsweep_corpus,
     dedup_lists,
+    foundry_stories,
     git_local,
     github_api,
     github_autoclosed,
@@ -29,6 +30,7 @@ from bin.landscape.adapters.build_snapshot import assemble_snapshot
 _REGISTRY: dict[str, ModuleType] = {
     "bugsweep_corpus": bugsweep_corpus,
     "dedup_lists": dedup_lists,
+    "foundry_stories": foundry_stories,
     "git_local": git_local,
     "github_api": github_api,
     "github_autoclosed": github_autoclosed,

@@ -26,16 +26,12 @@ from bin.landscape.evidence import (
 )
 from bin.workorder import RepoSnapshot, capture_repo_snapshot, normalize_remote_url
 
-# ASCII unit/record separators — cannot appear in commit subjects in practice
-# and keep `git log` parsing unambiguous without quoting games.
 _FIELD_SEP = "\x1f"
 _RECORD_SEP = "\x1e"
-
 
 class GitLocalError(RuntimeError):
     """A git query needed for evidence failed (bad root, unknown commit,
     path absent at the pinned revision, …)."""
-
 
 def _git(root: str, *args: str) -> str:
     """Run a git query and return stdout, raising GitLocalError on failure.
@@ -64,18 +60,15 @@ def _git(root: str, *args: str) -> str:
         )
     return proc.stdout
 
-
 def _uri_base(snap: RepoSnapshot) -> str:
     """<remote-or-root> part of the canonical uri: the normalized remote when
     one exists (stable across checkouts), else the local root."""
     return normalize_remote_url(snap.remote) or snap.remote or snap.root
 
-
 def _github_base(snap: RepoSnapshot) -> str:
     """Normalized https base iff the remote lives on github.com, else ''."""
     base = normalize_remote_url(snap.remote)
     return base if base.startswith("https://github.com/") else ""
-
 
 def repo_state_ref(root: str, *, why: str) -> EvidenceRef:
     """One TIER1_SYSTEM ref describing HEAD: commit, branch, remote, dirty."""
@@ -107,7 +100,6 @@ def repo_state_ref(root: str, *, why: str) -> EvidenceRef:
         browsable_link=link,
         why_selected=why,
     )
-
 
 def file_refs(
     root: str,
@@ -154,7 +146,6 @@ def file_refs(
         )
     return refs
 
-
 def recent_commit_refs(
     root: str, *, why: str, count: int = 10
 ) -> list[EvidenceRef]:
@@ -200,7 +191,6 @@ def recent_commit_refs(
             )
         )
     return refs
-
 
 def collect(
     config: dict, *, why: str, limits: Optional[dict] = None

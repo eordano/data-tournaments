@@ -22,13 +22,13 @@
   "head": {
     "label": "contributor-x:fix-empty-config",
     "ref": "fix-empty-config",
-    "sha": "REDACTED",
+    "sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
     "repo": { "full_name": "contributor-x/widgets" }
   },
   "base": {
     "label": "acme:main",
     "ref": "main",
-    "sha": "REDACTED",
+    "sha": "0f1e2d3c4b5a69788796a5b4c3d2e1f009876543",
     "repo": { "full_name": "acme/widgets" }
   },
   "author_association": "CONTRIBUTOR"

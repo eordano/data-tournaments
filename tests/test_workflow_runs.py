@@ -7,20 +7,15 @@ import pytest
 
 from bin import workflow_runs as wr
 
-
 @pytest.fixture
 def runs(tmp_data_home):
     wr.init()
     return wr
 
-
 def _start(runs, wfid="release:unity-explorer:abc123", runid="run-1", **kw):
     return runs.start(
         temporal_workflow_id=wfid, temporal_run_id=runid, **kw
     )
-
-
-# ── start / idempotency ─────────────────────────────────────────────────
 
 def test_start_creates_running_row(runs):
     rid = _start(runs)
@@ -30,24 +25,19 @@ def test_start_creates_running_row(runs):
     assert row["stage_history"] == []
     assert row["finished_at"] is None
 
-
 def test_start_is_idempotent_per_execution(runs):
     a = _start(runs)
-    b = _start(runs)  # retried record-start Activity: same (wfid, runid)
+    b = _start(runs)
     assert a == b
     assert len(runs.get_by_workflow_id("release:unity-explorer:abc123")) == 1
 
-
 def test_new_temporal_run_id_mints_new_row(runs):
     a = _start(runs, runid="run-1")
-    b = _start(runs, runid="run-2")  # retry / continue-as-new
+    b = _start(runs, runid="run-2")
     assert a != b
     rows = runs.get_by_workflow_id("release:unity-explorer:abc123")
     assert len(rows) == 2
-    assert rows[0]["id"] == b  # newest first
-
-
-# ── stage history ────────────────────────────────────────────────────────
+    assert rows[0]["id"] == b
 
 def test_record_stage_appends_only(runs):
     rid = _start(runs)
@@ -58,13 +48,9 @@ def test_record_stage_appends_only(runs):
     assert hist[1]["detail"] == {"quorum": 3}
     assert all("at" in h for h in hist)
 
-
 def test_record_stage_unknown_run_raises(runs):
     with pytest.raises(KeyError):
         runs.record_stage(999, stage="x", status="ok")
-
-
-# ── status transitions ───────────────────────────────────────────────────
 
 def test_set_status_terminal_stamps_finished_at(runs):
     rid = _start(runs)
@@ -76,24 +62,19 @@ def test_set_status_terminal_stamps_finished_at(runs):
     assert row["finished_at"] is not None
     assert row["detail"]["reason"] == "approval timeout"
 
-
 def test_terminal_status_is_sticky(runs):
     """A late-arriving projection update (retried activity) must not flip a
     terminal state back to running — mirrors judgement.py's done-flip guard."""
     rid = _start(runs)
     runs.set_status(rid, "done")
-    runs.set_status(rid, "running")  # late retry: ignored
-    runs.set_status(rid, "failed")  # terminal->terminal also ignored
+    runs.set_status(rid, "running")
+    runs.set_status(rid, "failed")
     assert runs.get(rid)["status"] == "done"
-
 
 def test_unknown_status_rejected(runs):
     rid = _start(runs)
     with pytest.raises(ValueError, match="unknown status"):
         runs.set_status(rid, "exploded")
-
-
-# ── listing ──────────────────────────────────────────────────────────────
 
 def test_list_runs_filters_by_status(runs):
     a = _start(runs, wfid="release:r:1", runid="r1")
@@ -102,8 +83,5 @@ def test_list_runs_filters_by_status(runs):
     assert [r["id"] for r in runs.list_runs(status="done")] == [a]
     assert {r["id"] for r in runs.list_runs()} == {a, b}
 
-
 def test_rebuildable_disclaimer_is_documented():
-    # The projection contract (rebuildable from Temporal history) is part of
-    # the module's public documentation, not just tribal knowledge.
     assert "rebuilt from" in wr.__doc__

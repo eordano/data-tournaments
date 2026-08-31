@@ -2,6 +2,21 @@ defmodule TournamentUiWeb.DomainsLive do
   @moduledoc """
   /domains — list active domains, kick off card generation per domain,
   link to /domains/new for creating new ones.
+
+  ## One primary action per card, and the chip cannot disagree with it
+
+  `domain_stage/1` returns the stage chip AND the single call to action, so
+  the badge saying "Human review" and the highlighted button saying "Review 3"
+  are the same decision rendered twice. Two `btn-primary` controls on one card
+  — a "Generate pairs" that spawns a job beside a "Review N" that only
+  navigates — asked the operator to guess which of the two was the next thing
+  to do, and made the destructive-ish one look equally inviting on a domain
+  that had already been generated. Everything else on the card is a ghost
+  affordance: still reachable, never competing.
+
+  The settled order is a first-class destination here. A domain whose pairs
+  have been judged points at `/standings`, because that is what the judging
+  bought.
   """
   use TournamentUiWeb, :live_view
 
@@ -171,12 +186,74 @@ defmodule TournamentUiWeb.DomainsLive do
 
   defp domain_stage(d) do
     cond do
-      d.error_count > 0 -> {"Needs attention", "bg-error/15 text-error"}
-      d.match_count == 0 -> {"Ready to generate", "bg-base-200 text-base-content/70"}
-      d.pending_human > 0 -> {"Human review", "bg-primary/15 text-primary"}
-      d.pending_llm > 0 -> {"Model review", "bg-info/15 text-info"}
-      true -> {"Results ready", "bg-success/15 text-success"}
+      d.error_count > 0 ->
+        stage(
+          :results,
+          "Needs attention",
+          "bg-error/15 text-error",
+          "Inspect failed ratings →",
+          d
+        )
+
+      d.match_count == 0 ->
+        stage(
+          :generate,
+          "Ready to generate",
+          "bg-base-200 text-base-content/70",
+          "Generate pairs",
+          d
+        )
+
+      d.pending_human > 0 ->
+        stage(
+          :judge,
+          "Human review",
+          "bg-primary/15 text-primary",
+          "Review #{d.pending_human} →",
+          d
+        )
+
+      d.pending_llm > 0 ->
+        stage(:standings, "Model review", "bg-info/15 text-info", "See the priority order →", d)
+
+      true ->
+        stage(
+          :standings,
+          "Results ready",
+          "bg-success/15 text-success",
+          "See the priority order →",
+          d
+        )
     end
+  end
+
+  defp stage(key, label, class, action_label, d),
+    do: %{
+      key: key,
+      label: label,
+      class: class,
+      action_label: action_label,
+      action_href: href_for(key, d)
+    }
+
+  defp href_for(:generate, _d), do: nil
+  defp href_for(:judge, d), do: DomainNav.judge_path(d.name)
+  defp href_for(:results, d), do: DomainNav.results_path(d.name)
+  defp href_for(:standings, d), do: standings_path(d.name)
+
+  defp standings_path(domain), do: "/standings?" <> URI.encode_query(%{"domain" => domain})
+
+  defp secondary_actions(d, stage) do
+    [
+      d.pending_human > 0 &&
+        %{key: :judge, label: "Review #{d.pending_human} →", href: DomainNav.judge_path(d.name)},
+      d.match_count > 0 &&
+        %{key: :standings, label: "Priority order →", href: standings_path(d.name)},
+      d.match_count > 0 &&
+        %{key: :results, label: "Compare results →", href: DomainNav.results_path(d.name)}
+    ]
+    |> Enum.filter(&is_map/1)
+    |> Enum.reject(&(&1.key == stage.key))
   end
 
   defp completed_count(d), do: d.completed_human + d.completed_llm
@@ -194,6 +271,7 @@ defmodule TournamentUiWeb.DomainsLive do
     ~H"""
     <.workspace_page
       current={:domains}
+      flash={@flash}
       title="Domains"
       subtitle="Your workflow hubs: configure a source and lens, generate candidate pairs, review them, then compare results."
     >
@@ -215,7 +293,7 @@ defmodule TournamentUiWeb.DomainsLive do
       <% else %>
         <div class="space-y-4">
           <%= for d <- @domains do %>
-            <% {stage_label, stage_class} = domain_stage(d) %>
+            <% stage = domain_stage(d) %>
             <article class="app-card p-5" id={"domain-#{d.id}"}>
               <div class="flex items-start justify-between gap-4">
                 <div class="min-w-0">
@@ -226,8 +304,8 @@ defmodule TournamentUiWeb.DomainsLive do
                     >
                       {d.name}
                     </.link>
-                    <span class={["text-[11px] font-medium px-2 py-0.5 rounded-full", stage_class]}>
-                      {stage_label}
+                    <span class={["text-[11px] font-medium px-2 py-0.5 rounded-full", stage.class]}>
+                      {stage.label}
                     </span>
                   </div>
                   <div class="text-sm opacity-80 mt-1">{d.description}</div>
@@ -256,12 +334,13 @@ defmodule TournamentUiWeb.DomainsLive do
                     Improve rubric
                   </button>
                   <button
+                    :if={stage.key != :generate}
                     phx-click="generate"
                     phx-value-name={d.name}
-                    class={["btn btn-sm btn-primary", @active_job && "btn-disabled"]}
+                    class={["btn btn-sm btn-ghost border app-hairline", @active_job && "btn-disabled"]}
                     disabled={@active_job != nil}
                   >
-                    Generate pairs
+                    Regenerate pairs
                   </button>
                 </div>
               </div>
@@ -290,20 +369,35 @@ defmodule TournamentUiWeb.DomainsLive do
                   <span class="text-[11px] font-mono opacity-55">{completion_percent(d)}% rated</span>
                 </div>
 
-                <div class="mt-4 flex items-center justify-end gap-2">
+                <div class="mt-4 flex items-center justify-end gap-2 flex-wrap">
+                  <%= for action <- secondary_actions(d, stage) do %>
+                    <.link
+                      navigate={action.href}
+                      class="btn btn-sm btn-ghost border app-hairline"
+                    >
+                      {action.label}
+                    </.link>
+                  <% end %>
+
+                  <button
+                    :if={stage.key == :generate}
+                    phx-click="generate"
+                    phx-value-name={d.name}
+                    data-role="primary-action"
+                    id={"domain-#{d.id}-primary"}
+                    class={["btn btn-sm btn-primary", @active_job && "btn-disabled"]}
+                    disabled={@active_job != nil}
+                  >
+                    {stage.action_label}
+                  </button>
                   <.link
-                    :if={d.pending_human > 0}
-                    navigate={DomainNav.judge_path(d.name)}
+                    :if={stage.key != :generate}
+                    navigate={stage.action_href}
+                    data-role="primary-action"
+                    id={"domain-#{d.id}-primary"}
                     class="btn btn-sm btn-primary"
                   >
-                    Review {d.pending_human} →
-                  </.link>
-                  <.link
-                    :if={d.match_count > 0}
-                    navigate={DomainNav.results_path(d.name)}
-                    class="btn btn-sm btn-ghost border app-hairline"
-                  >
-                    Compare results →
+                    {stage.action_label}
                   </.link>
                 </div>
               </div>

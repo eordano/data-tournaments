@@ -10,9 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import git_bin_dir
+
 from bin import catalog, ops
 from bin.landscape import EvidenceRef, SourceType, TrustTier
-
 
 @pytest.fixture
 def seeded_home(tmp_data_home):
@@ -31,19 +32,15 @@ def seeded_home(tmp_data_home):
     )
     catalog.insert_evidence_ref(small, source_id=src["id"])
 
-    # Force a CAS write: body over the inline threshold.
     big = EvidenceRef(
         source_type=SourceType.DOC,
         canonical_uri="doc://big",
         trust_tier=TrustTier.TIER2_INTERNAL,
-        excerpt="x" * 4000,  # excerpt is bounded, body payload is what CASes
+        excerpt="x" * 4000,
         why_selected="test",
     )
     catalog.insert_evidence_ref(big, source_id=src["id"])
     return tmp_data_home
-
-
-# ── backup / restore ─────────────────────────────────────────────────────
 
 def test_backup_creates_archive_with_manifest(seeded_home, tmp_path):
     archive = ops.backup(tmp_path / "backups")
@@ -53,13 +50,11 @@ def test_backup_creates_archive_with_manifest(seeded_home, tmp_path):
     assert "judgements.db" in names
     assert "manifest.json" in names
 
-
 def test_backup_no_partial_archive_on_missing_db(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_TOURNAMENTS_HOME", str(tmp_path / "empty"))
     with pytest.raises(FileNotFoundError):
         ops.backup(tmp_path / "backups")
     assert not list((tmp_path / "backups").glob("*")) if (tmp_path / "backups").exists() else True
-
 
 def test_restore_round_trip_verifies_sha(seeded_home, tmp_path):
     archive = ops.backup(tmp_path / "backups")
@@ -69,19 +64,16 @@ def test_restore_round_trip_verifies_sha(seeded_home, tmp_path):
     actual = hashlib.sha256((dest / "judgements.db").read_bytes()).hexdigest()
     assert actual == manifest["db_sha256"]
 
-
 def test_restore_refuses_overwrite_without_force(seeded_home, tmp_path):
     archive = ops.backup(tmp_path / "backups")
     dest = tmp_path / "restored"
     ops.restore(archive, dest)
     with pytest.raises(FileExistsError):
         ops.restore(archive, dest)
-    ops.restore(archive, dest, force=True)  # explicit force succeeds
-
+    ops.restore(archive, dest, force=True)
 
 def test_restore_fails_on_tampered_db(seeded_home, tmp_path):
     archive = ops.backup(tmp_path / "backups")
-    # Tamper: rebuild the archive with a modified DB but original manifest.
     work = tmp_path / "tamper"
     with tarfile.open(archive) as tar:
         tar.extractall(work, filter="data")
@@ -94,14 +86,10 @@ def test_restore_fails_on_tampered_db(seeded_home, tmp_path):
     with pytest.raises(RuntimeError, match="verification FAILED"):
         ops.restore(bad, tmp_path / "restored2")
 
-
-# ── CAS integrity ────────────────────────────────────────────────────────
-
 def test_cas_verify_clean_state_ok(seeded_home):
     report = ops.cas_verify()
     assert report["ok"] is True
     assert report["problems"] == []
-
 
 def test_cas_verify_detects_missing_cas_file(seeded_home):
     home = seeded_home
@@ -115,7 +103,6 @@ def test_cas_verify_detects_missing_cas_file(seeded_home):
     assert report["ok"] is False
     assert any("CAS file missing" in p for p in report["problems"])
 
-
 def test_cas_verify_detects_content_tamper(seeded_home):
     home = seeded_home
     cas_root = home / "cas" / "sha256"
@@ -128,7 +115,6 @@ def test_cas_verify_detects_content_tamper(seeded_home):
     assert report["ok"] is False
     assert any("hash mismatch" in p for p in report["problems"])
 
-
 def test_gc_dry_run_reports_orphans_never_deletes(seeded_home):
     home = seeded_home
     orphan_dir = home / "cas" / "sha256" / "ab"
@@ -140,18 +126,15 @@ def test_gc_dry_run_reports_orphans_never_deletes(seeded_home):
     orphan.write_bytes(body)
     report = ops.gc_dry_run()
     assert digest in report["would_delete"]
-    assert orphan.exists()  # dry run NEVER deletes
+    assert orphan.exists()
     assert "deferred" in report["note"]
-
-
-# ── CLI ──────────────────────────────────────────────────────────────────
 
 def test_cli_backup_and_verify(seeded_home, tmp_path):
     env_home = str(seeded_home)
     r = subprocess.run(
         [sys.executable, "bin/ops.py", "backup", "--dest", str(tmp_path / "b")],
         capture_output=True, text=True,
-        env={"PATH": "/usr/bin:/bin", "DATA_TOURNAMENTS_HOME": env_home,
+        env={"PATH": git_bin_dir(), "DATA_TOURNAMENTS_HOME": env_home,
              "PYTHONPATH": str(Path.cwd())},
         cwd=str(Path.cwd()),
     )
@@ -161,7 +144,7 @@ def test_cli_backup_and_verify(seeded_home, tmp_path):
     r2 = subprocess.run(
         [sys.executable, "bin/ops.py", "cas-verify"],
         capture_output=True, text=True,
-        env={"PATH": "/usr/bin:/bin", "DATA_TOURNAMENTS_HOME": env_home,
+        env={"PATH": git_bin_dir(), "DATA_TOURNAMENTS_HOME": env_home,
              "PYTHONPATH": str(Path.cwd())},
         cwd=str(Path.cwd()),
     )

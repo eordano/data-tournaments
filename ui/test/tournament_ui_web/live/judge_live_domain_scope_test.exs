@@ -15,7 +15,9 @@ defmodule TournamentUiWeb.JudgeLiveDomainScopeTest do
         else: Application.delete_env(:tournament_ui, :prompt_backend)
     end)
 
-    home = "/tmp/dt-judge-domain-scope-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-judge-domain-scope-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 

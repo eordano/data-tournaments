@@ -42,12 +42,10 @@ from bin.release_workflow.workflow import UnityReleaseWorkflow  # noqa: E402
 
 DEFAULT_TARGET = "localhost:7233"
 
-
 async def _client(target: Optional[str] = None) -> Client:
     return await Client.connect(
         target or os.environ.get("TEMPORAL_TARGET", DEFAULT_TARGET)
     )
-
 
 async def start_release(
     repo: str,
@@ -88,7 +86,6 @@ async def start_release(
     )
     return wf_id
 
-
 async def get_status(
     workflow_id: str, *, client: Optional[Client] = None
 ) -> dict[str, Any]:
@@ -107,7 +104,6 @@ async def get_status(
         "stage_results": [dataclasses.asdict(s) for s in stages],
     }
 
-
 async def send_approval(
     workflow_id: str,
     approved: bool,
@@ -123,10 +119,6 @@ async def send_approval(
         UnityReleaseWorkflow.submit_approval,
         ApprovalDecision(approved=approved, approver=approver, reason=reason),
     )
-
-
-# ── CLI ──────────────────────────────────────────────────────────────────
-
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -161,7 +153,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     return p
 
-
 async def _amain(args: argparse.Namespace) -> None:
     if args.cmd == "start":
         wf_id = await start_release(
@@ -176,16 +167,14 @@ async def _amain(args: argparse.Namespace) -> None:
         print(f"started {wf_id}")
     elif args.cmd == "status":
         print(json.dumps(await get_status(args.workflow_id), indent=2))
-    else:  # approve / reject
+    else:
         await send_approval(
             args.workflow_id, args.approved, args.approver, args.reason
         )
         print(f"{args.cmd}ed {args.workflow_id} as {args.approver}")
 
-
 def main() -> None:
     asyncio.run(_amain(_build_parser().parse_args()))
-
 
 if __name__ == "__main__":
     main()

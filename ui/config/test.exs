@@ -4,7 +4,7 @@ import Config
 # you can enable the server option below.
 config :tournament_ui, TournamentUiWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
-  secret_key_base: "REDACTED",
+  secret_key_base: "nIWYb0blJyHUnHdtz5tiUTAYE9A9mobGWwXIN8ffaK+H7zzFDfsZlnRBiapJ3n6i",
   server: false
 
 # Print only warnings and errors during test

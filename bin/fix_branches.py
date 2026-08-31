@@ -62,23 +62,14 @@ STATUSES = (
     "rolled-back",
 )
 TERMINAL_STATUSES = ("shipped", "rejected")
-# Statuses a validation write must never clobber: terminal ones, plus
-# 'shipping' — a release is in flight; its projection (sync_completion)
-# owns the next transition, not a late validation row.
 _STATUS_LOCKED = TERMINAL_STATUSES + ("shipping",)
 DECISIONS = ("approve", "reject", "needs-changes")
-
-
-# ── Paths / connection (bin/campaigns.py conventions) ─────────────────────
-
 
 def _data_home() -> Path:
     return Path(os.environ.get("DATA_TOURNAMENTS_HOME", "/tmp/data-tournaments"))
 
-
 def _db_path() -> Path:
     return _data_home() / "judgements.db"
-
 
 class _ClosingConnection(sqlite3.Connection):
     """sqlite3.Connection whose ``with`` block also CLOSES on exit
@@ -86,10 +77,9 @@ class _ClosingConnection(sqlite3.Connection):
 
     def __exit__(self, exc_type, exc, tb):
         try:
-            return super().__exit__(exc_type, exc, tb)  # commit / rollback
+            return super().__exit__(exc_type, exc, tb)
         finally:
             self.close()
-
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(_db_path()), factory=_ClosingConnection)
@@ -98,16 +88,11 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
-
 def init() -> None:
     """Apply the shared schema file. Idempotent (all DDL is IF NOT EXISTS)."""
     from bin import catalog
 
     catalog.init()
-
-
-# ── Git plumbing ──────────────────────────────────────────────────────────
-
 
 def _git_env() -> dict:
     """Hermetic git: no user/system config can change behaviour."""
@@ -115,7 +100,6 @@ def _git_env() -> dict:
     env["GIT_CONFIG_GLOBAL"] = "/dev/null"
     env["GIT_CONFIG_SYSTEM"] = "/dev/null"
     return env
-
 
 def _git(repo_path: str, *args: str) -> str:
     """Run a git command in ``repo_path``; return stripped stdout.
@@ -136,7 +120,6 @@ def _git(repo_path: str, *args: str) -> str:
         )
     return proc.stdout.strip()
 
-
 def _default_branch(repo_path: str) -> str:
     """The repo's default branch: origin/HEAD if set, else init.defaultBranch
     fallback probing of common names, else the current HEAD's branch."""
@@ -151,13 +134,10 @@ def _default_branch(repo_path: str) -> str:
             return name
         except ValueError:
             continue
-    # Last resort: whatever HEAD points at.
     return _git(repo_path, "rev-parse", "--abbrev-ref", "HEAD")
-
 
 def _resolve_sha(repo_path: str, ref: str) -> str:
     return _git(repo_path, "rev-parse", "--verify", f"{ref}^{{commit}}")
-
 
 def _assert_no_merges(repo_path: str, base_sha: str, head_sha: str) -> None:
     merges = _git(repo_path, "rev-list", "--merges", f"{base_sha}..{head_sha}")
@@ -167,10 +147,8 @@ def _assert_no_merges(repo_path: str, base_sha: str, head_sha: str) -> None:
             f"must be linear (rebase, don't merge): {merges.splitlines()}"
         )
 
-
 def _diffs_dir() -> Path:
     return _data_home() / "branch-diffs"
-
 
 def _patch_digest(repo_path: str, base_sha: str, head_sha: str) -> str:
     """sha256 of ``git diff base..head`` (the exact patch content).
@@ -195,7 +173,6 @@ def _patch_digest(repo_path: str, base_sha: str, head_sha: str) -> str:
     (diffs / f"{digest}.patch").write_bytes(proc.stdout)
     return digest
 
-
 def _changed_files(repo_path: str, base_sha: str, head_sha: str) -> list[dict]:
     """``git diff --name-status base..head`` as [{'status', 'path'}, ...].
     Best-effort: an unreadable repo yields [] (the DB record still stands)."""
@@ -208,21 +185,27 @@ def _changed_files(repo_path: str, base_sha: str, head_sha: str) -> list[dict]:
         parts = line.split("\t")
         if not parts or not parts[0]:
             continue
-        # rename/copy lines are 'R100\told\tnew' — the LAST field is the
-        # path as it exists at head.
         files.append({"status": parts[0], "path": parts[-1]})
     return files
 
-
-# ── Registration / refresh ────────────────────────────────────────────────
-
-
 UNRESOLVED_REF_STAMP = "unresolved-ref"
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
 
 def _workorder_ref_resolves(conn: sqlite3.Connection, ref: str) -> bool:
     """True when ``ref`` resolves inside THIS judgements.db: an int-like
-    pending_judgement id, an existing finding slug, or a domain name."""
+    pending_judgement id, an existing finding slug, a domain name, or a
+    tournament item claimed in the dispatch ledger.
+
+    The last one is what lets a dispatched branch name the ITEM it
+    implements. A domain name is a per-domain constant, so lineage stamped
+    with it cannot say which of a hundred ranked items a branch came from;
+    the claim is written before authoring, so by the time this runs the
+    item_id is already in work_dispatch.
+    """
     ref = str(ref).strip()
     if not ref:
         return False
@@ -240,8 +223,11 @@ def _workorder_ref_resolves(conn: sqlite3.Connection, ref: str) -> bool:
         return True
     if conn.execute("SELECT 1 FROM domain WHERE name=?", (ref,)).fetchone():
         return True
+    if _table_exists(conn, "work_dispatch") and conn.execute(
+        "SELECT 1 FROM work_dispatch WHERE item_id=?", (ref,)
+    ).fetchone():
+        return True
     return False
-
 
 def _resolve_lineage(
     conn: sqlite3.Connection,
@@ -279,11 +265,11 @@ def _resolve_lineage(
         return f"{UNRESOLVED_REF_STAMP}:{workorder_ref}"
     raise ValueError(
         f"workorder_ref does not resolve: {workorder_ref!r} is not a "
-        "pending_judgement id, finding slug, or domain name in this DB "
-        "(pass allow_unresolved=True / --allow-unresolved for exploratory "
-        "use — the ref will be stamped 'unresolved-ref')"
+        "pending_judgement id, finding slug, domain name, or dispatched "
+        "item id in this DB (pass allow_unresolved=True / "
+        "--allow-unresolved for exploratory use — the ref will be stamped "
+        "'unresolved-ref')"
     )
-
 
 def register_branch(
     repo_path: str,
@@ -335,7 +321,6 @@ def register_branch(
         conn.commit()
         return cur.lastrowid
 
-
 def _get_row(conn: sqlite3.Connection, fix_branch_id: int) -> sqlite3.Row:
     row = conn.execute(
         "SELECT * FROM fix_branch WHERE id=?", (fix_branch_id,)
@@ -343,7 +328,6 @@ def _get_row(conn: sqlite3.Connection, fix_branch_id: int) -> sqlite3.Row:
     if row is None:
         raise LookupError(f"no fix_branch with id {fix_branch_id}")
     return row
-
 
 def refresh_head(fix_branch_id: int) -> dict:
     """Re-read the branch tip. If it moved (amend/force-push/new commits):
@@ -355,9 +339,6 @@ def refresh_head(fix_branch_id: int) -> dict:
     new_head = _resolve_sha(row["repo_path"], row["branch_name"])
     if new_head == row["head_sha"]:
         return get_branch(fix_branch_id)
-    # Re-anchor the base: prefer the merge-base with the default branch
-    # (handles rebases onto a newer default); fall back to the old base
-    # (handles amends in repos without a resolvable default).
     try:
         default_tip = _resolve_sha(row["repo_path"], _default_branch(row["repo_path"]))
         base_sha = _git(row["repo_path"], "merge-base", default_tip, new_head)
@@ -375,10 +356,6 @@ def refresh_head(fix_branch_id: int) -> dict:
         conn.execute(f"UPDATE fix_branch SET {', '.join(sets)} WHERE id=?", args)
         conn.commit()
     return get_branch(fix_branch_id)
-
-
-# ── Validation rows (append-only; SHA-bound) ──────────────────────────────
-
 
 def record_validation(
     fix_branch_id: int,
@@ -436,7 +413,6 @@ def record_validation(
         conn.commit()
         return cur.lastrowid
 
-
 def current_validation(fix_branch_id: int) -> Optional[dict]:
     """Latest validation row bound to the CURRENT head_sha, else None.
     Rows referencing an old SHA are stranded by construction."""
@@ -448,10 +424,6 @@ def current_validation(fix_branch_id: int) -> Optional[dict]:
             (fix_branch_id, row["head_sha"]),
         ).fetchone()
         return dict(v) if v is not None else None
-
-
-# ── Review rows (append-only; approve is RBAC-gated) ──────────────────────
-
 
 def record_review(
     fix_branch_id: int,
@@ -489,11 +461,7 @@ def record_review(
             )
         from bin import approvals
 
-        # AUTHORIZATION first — fail closed before any write
-        # (review_rules.promote precedent). ApprovalDenied propagates.
         policy_id = approvals.authorize(reviewer, f"branchfix:{branch_name}")
-        # AUDIT before the review row: intent is recorded even if the
-        # review insert then fails — operators reconcile from audit.
         approval_event_id = approvals.record_event(
             workflow_id=f"branchfix:{branch_name}:{head_sha[:12]}",
             decision=approvals.APPROVE,
@@ -522,7 +490,6 @@ def record_review(
                 "updated_at=datetime('now') WHERE id=?",
                 (fix_branch_id,),
             )
-        # needs-changes: status left as-is (typically 'validated').
         conn.commit()
         review_id = cur.lastrowid
     return {
@@ -531,10 +498,6 @@ def record_review(
         "tested_sha": head_sha,
         "approval_event_id": approval_event_id,
     }
-
-
-# ── Queries ───────────────────────────────────────────────────────────────
-
 
 def mark_shipped(fix_branch_id: int) -> None:
     """Flip an APPROVED branch to terminal 'shipped' (called by the ship
@@ -553,7 +516,6 @@ def mark_shipped(fix_branch_id: int) -> None:
             (fix_branch_id,),
         )
         conn.commit()
-
 
 def mark_shipping(
     fix_branch_id: int,
@@ -591,7 +553,6 @@ def mark_shipping(
         conn.commit()
         return cur.lastrowid
 
-
 def latest_ship(fix_branch_id: int) -> Optional[dict]:
     """The most recent fix_branch_ship row for a branch, or None."""
     with _connect() as conn:
@@ -601,7 +562,6 @@ def latest_ship(fix_branch_id: int) -> Optional[dict]:
             (fix_branch_id,),
         ).fetchone()
         return dict(row) if row is not None else None
-
 
 def set_ship_outcome(fix_branch_id: int, outcome: str) -> None:
     """Project a release outcome onto a SHIPPING branch: 'shipped' (release
@@ -625,7 +585,6 @@ def set_ship_outcome(fix_branch_id: int, outcome: str) -> None:
         )
         conn.commit()
 
-
 def list_branches(
     *, finding: Optional[int] = None, status: Optional[str] = None
 ) -> list[dict]:
@@ -642,7 +601,6 @@ def list_branches(
     q += " ORDER BY repo_path, branch_name"
     with _connect() as conn:
         return [dict(r) for r in conn.execute(q, args).fetchall()]
-
 
 def get_branch(fix_branch_id: int) -> dict:
     """Fetch a fix_branch with its validation runs and reviews attached
@@ -671,8 +629,6 @@ def get_branch(fix_branch_id: int) -> dict:
         v for v in d["validations"] if v["tested_sha"] == d["head_sha"]
     ]
     d["current_validation"] = cv[-1] if cv else None
-    # Content-addressed diff (wave-10 V2): text when captured, None when
-    # missing (the UI renders 'diff not captured' for None).
     diff_path = _diffs_dir() / f"{d['patch_digest']}.patch"
     try:
         d["diff"] = diff_path.read_text(errors="replace")
@@ -683,13 +639,8 @@ def get_branch(fix_branch_id: int) -> dict:
     )
     return d
 
-
-# ── CLI (debug aid; the real entry points are the importable functions) ──
-
-
 def _print(obj: Any) -> None:
     print(json.dumps(obj, indent=2, default=str))
-
 
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(
@@ -730,6 +681,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="pin exact leg counts, e.g. 'red=1/1,green=30/30,guard=5/5' — "
         "any parsed-counter drift fails the leg with COUNTER-MISMATCH",
     )
+    sp.add_argument(
+        "--no-standing", action="store_true",
+        help="validate WITHOUT the tournament return edge, even for a "
+             "dispatched branch: no ranking evidence row is written",
+    )
 
     sp = sub.add_parser("review")
     sp.add_argument("--id", type=int, required=True)
@@ -761,8 +717,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif cmd == "refresh":
         _print(refresh_head(args.id))
     elif cmd == "validate":
-        from bin import branch_validator
+        from bin import branch_validator, dispatch
 
+        standing = None if args.no_standing else dispatch.standing_for_branch(args.id)
+        print(
+            "return edge: "
+            + (f"standing from the dispatch ledger, pool {standing['pool_id']}, "
+               f"{len(standing['pair_keys'])} pair key(s)" if standing
+               else "none — this branch has no dispatch ledger row, so the "
+                    "beat outcome records no ranking evidence"),
+            file=sys.stderr,
+        )
         expected = None
         if getattr(args, "expected", None):
             expected = {}
@@ -783,6 +748,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 guard_cmd=args.guard_cmd,
                 scratch_dir=args.scratch_dir,
                 expected=expected,
+                standing=standing,
             )
         )
     elif cmd == "review":
@@ -795,7 +761,6 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
         )
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

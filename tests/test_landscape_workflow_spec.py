@@ -11,10 +11,8 @@ from bin.landscape.workflow_spec import (
     WorkflowStep,
 )
 
-
 def step(id: str, kind: StepKind = StepKind.TOOL, **kw) -> WorkflowStep:
     return WorkflowStep(id=id, kind=kind, **kw)
-
 
 class TestWorkflowStep:
     def test_deploy_and_rollback_force_needs_approval(self):
@@ -48,7 +46,6 @@ class TestWorkflowStep:
             "gather", "retrieve", "agent", "tool", "sandbox",
             "human_approval", "deploy", "rollback",
         }
-
 
 class TestWorkflowSpecValidation:
     def test_unknown_dependency_rejected(self):
@@ -98,7 +95,6 @@ class TestWorkflowSpecValidation:
         with pytest.raises(pydantic.ValidationError):
             WorkflowSpec(name=" ")
 
-
 class TestSpecDigest:
     def test_deterministic_across_reconstruction(self):
         make = lambda: WorkflowSpec(
@@ -127,7 +123,6 @@ class TestSpecDigest:
             != WorkflowSpec(name="w", steps=(step("a", description="x"),)).digest
         )
 
-
 class TestImmutabilityAndRoundTrip:
     def test_spec_mutation_raises(self):
         spec = WorkflowSpec(name="w", steps=(step("a"),))
@@ -149,8 +144,6 @@ class TestImmutabilityAndRoundTrip:
         assert json_again.digest == spec.digest
 
     def test_no_approval_or_authorization_state_fields(self):
-        # needs_approval is a REQUIREMENT (policy), not a grant. Actual
-        # approval state lives in the runtime, never in the artifact.
         forbidden = {
             "approved", "approvals", "approved_by", "approval_granted",
             "authorized", "authorization", "approval_state", "status",

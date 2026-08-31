@@ -2,7 +2,7 @@
 
 Date: 2026-08-16
 
-Target: `/Users/user/Projects/unity-editor/Explorer` (read-only; no Unity project files were changed)
+Target: `~/Projects/unity-editor/Explorer` (read-only; no Unity project files were changed)
 
 App under test: `http://localhost:4000`
 

@@ -2,9 +2,9 @@
 """
 run-tournament <config.json>  — Langfuse-native tournament orchestrator.
 
-Drives a single-elimination tournament where each match is one execution of
-a sandboxed agent (Hermes via MCP) that picks one of two inputs as the
-winner and submits a synthesis markdown.
+Drives a Swiss tournament where each match is one execution of a sandboxed
+agent (Hermes via MCP) that compares two inputs and submits a synthesis
+markdown plus a winner -- or no winner at all, which is a draw.
 
 Architecture
 ------------
@@ -19,21 +19,29 @@ Each round becomes one Langfuse `run_experiment(...)` invocation:
       * word_count_within_limit    (BOOLEAN) — config.max_words
       * synthesis_quality_judge    (NUMERIC 0–1) — LLM-as-judge
 
-Winner advancement
-------------------
-Each match has 2 inputs and produces:
-  - synthesis_md: the merged/critical analysis the agent wrote
-  - winner_id:    1 or 2 (or 0 for byes)
+Pairing
+-------
+Pairing is bin/swiss.py — the one answer in this tree to "who plays whom":
+football points (win 3, draw 1, loss 0), a seeded random first round, later
+rounds sorted by matches played then points, never a repeated pair, and
+ceil(log2 N) rounds over a pool that never shrinks. Nothing is eliminated, so
+the run ends with a standings table rather than one conclusion. An odd pool
+gives one item a bye each round: no agent runs and no points are scored.
 
-config["advance"] decides what the next round consumes:
-  - "synthesis" (default) — synthesis_md goes forward
-  - "winner"               — the winning input's content goes forward verbatim
+Draws
+-----
+Each match produces a synthesis and a winner_id of 1 or 2. Anything else — 0,
+null, a missing winner file — is recorded as a draw, worth a point to each
+side. A comparison the agent would not call is never settled by inventing a
+winner for it.
 
 State
 -----
-SQLite still tracks bracket structure (rounds, matches, inputs, conclusions)
-so resume works without re-querying Langfuse. Conclusions stored in the DB
-are whichever artifact `advance` selected.
+SQLite tracks the rounds, the matches, their pair keys and their outcomes, so
+a resumed run rebuilds the standings from stored results and continues at the
+round it stopped in. config["advance"] no longer decides what the next round
+consumes — the pool is the configured inputs from first round to last — and
+survives only as the choice of what the `conclusion` column keeps.
 
 Config schema
 -------------
@@ -71,7 +79,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import random
 import sqlite3
 import subprocess
 import tempfile
@@ -79,12 +86,15 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
 
-# Import judgement early so its `.env` loader runs before any Langfuse
-# client initialization. Soft import — judgement-fabric is optional.
 try:
     import judgement  # noqa: F401  (side-effect: loads .env into os.environ)
 except Exception:
     pass
+
+try:
+    from bin import swiss
+except ImportError:
+    import swiss
 
 BIN_DIR = Path(os.environ.get("DATA_TOURNAMENTS_BIN") or Path(__file__).resolve().parent)
 HARNESS = BIN_DIR / "hermes-harness.sh"
@@ -101,14 +111,9 @@ DEFAULT_JUDGE = {
     "temperature": 0.0,
 }
 
-
 def log(msg: str) -> None:
     print(msg, flush=True)
 
-
-# ────────────────────────────────────────────────────────────────────────
-# Config + DB
-# ────────────────────────────────────────────────────────────────────────
 def load_config(path: Path) -> dict:
     cfg = json.loads(path.read_text())
     cfg.setdefault("name", path.stem)
@@ -129,7 +134,6 @@ def load_config(path: Path) -> dict:
         raise SystemExit("config must include `inputs` and `match_prompt`")
     return cfg
 
-
 def init_db(path: Path) -> sqlite3.Connection:
     fresh = not path.exists()
     db = sqlite3.connect(str(path))
@@ -142,9 +146,11 @@ def init_db(path: Path) -> sqlite3.Connection:
           input_a TEXT NOT NULL,
           input_b TEXT,
           is_bye INTEGER NOT NULL DEFAULT 0,
-          conclusion TEXT,                         -- the markdown that advances
+          pair_key TEXT,
+          outcome TEXT,
+          conclusion TEXT,                         -- what the config kept
           synthesis TEXT,                          -- always the agent's synthesis
-          winner_id INTEGER,                       -- 1 or 2 (or NULL for bye)
+          winner_id INTEGER,                       -- 1 or 2 (NULL on a draw)
           winner_reasoning TEXT,
           trace_id TEXT,                           -- Langfuse trace id (32 hex)
           created_at TEXT DEFAULT (datetime('now'))
@@ -154,46 +160,101 @@ def init_db(path: Path) -> sqlite3.Connection:
         """)
         db.commit()
     else:
-        # Migrate older rows: best-effort add columns if missing.
         cols = {r[1] for r in db.execute("PRAGMA table_info(matches)")}
         for col, ddl in [
             ("synthesis", "ALTER TABLE matches ADD COLUMN synthesis TEXT"),
             ("winner_id", "ALTER TABLE matches ADD COLUMN winner_id INTEGER"),
             ("winner_reasoning", "ALTER TABLE matches ADD COLUMN winner_reasoning TEXT"),
             ("trace_id", "ALTER TABLE matches ADD COLUMN trace_id TEXT"),
+            ("pair_key", "ALTER TABLE matches ADD COLUMN pair_key TEXT"),
+            ("outcome", "ALTER TABLE matches ADD COLUMN outcome TEXT"),
         ]:
             if col not in cols:
                 db.execute(ddl)
         db.commit()
     return db
 
+VERDICT_FOR_OUTCOME = swiss.CANONICAL_VERDICT_FOR_OUTCOME
 
-def random_pair(db: sqlite3.Connection, round_n: int, pool: list[str], seed: int) -> None:
-    rng = random.Random(seed + round_n)
-    items = list(pool)
-    rng.shuffle(items)
-    pairs: list[tuple[int, str, Optional[str], int]] = []
-    i = 0
-    slot = 0
-    while i < len(items):
-        if i + 1 < len(items):
-            pairs.append((slot, items[i], items[i + 1], 0))
-            i += 2
-        else:
-            pairs.append((slot, items[i], None, 1))
-            i += 1
-        slot += 1
-    for slot, a, b, bye in pairs:
+THE_ORCHESTRATOR_READS_THE_ENGINES_VOCABULARY_IT_NEVER_RESTATES_IT = (
+    "this used to be a hand-written map of outcome to verdict. It kept "
+    "naming a vocabulary the engine had retired, so every replayed match "
+    "raised out of swiss.record and the shipped orchestrator could not "
+    "finish a round. Reading the engine's own map means a rubric rename "
+    "cannot leave this file behind."
+)
+assert set(VERDICT_FOR_OUTCOME) >= {
+    swiss.OUTCOME_A, swiss.OUTCOME_B, swiss.OUTCOME_DRAW
+}, THE_ORCHESTRATOR_READS_THE_ENGINES_VOCABULARY_IT_NEVER_RESTATES_IT
+
+def pool_item(path: str) -> swiss.Item:
+    """One entrant. The pair key hashes the file's content, so two inputs that
+    are the same text are the same entrant however they are named."""
+    try:
+        content = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        content = path
+    return swiss.Item(id=path, content=content)
+
+def build_pool(cfg: dict, db: sqlite3.Connection) -> swiss.Pool:
+    """Rebuild the standings from what SQLite already holds.
+
+    The pool is the configured inputs, first round to last -- it does not
+    shrink as rounds are played. Replaying the stored outcomes in round order
+    is what lets a resumed run continue at the right round with the right
+    points.
+    """
+    pool = swiss.new_pool(
+        (pool_item(path) for path in cfg["inputs"]),
+        rubric_id=str(cfg["name"]),
+        rubric_version=int(cfg.get("rubric_version", 1)),
+        seed=int(cfg["seed"]),
+    )
+    rows = db.execute(
+        "SELECT round, input_a, input_b, is_bye, outcome FROM matches "
+        "ORDER BY round, slot"
+    ).fetchall()
+    for round_n, input_a, input_b, is_bye, outcome in rows:
+        if is_bye:
+            swiss.no_result(pool, round=round_n, item_id=input_a,
+                            cause=swiss.NO_RESULT_CAUSE_BYE)
+            continue
+        if outcome not in VERDICT_FOR_OUTCOME:
+            continue
+        swiss.record(pool, round=round_n, item_a=input_a, item_b=input_b,
+                     verdict=VERDICT_FOR_OUTCOME[outcome])
+    return pool
+
+def insert_round(db: sqlite3.Connection, drawn: swiss.Round) -> None:
+    """Persist one drawn round.
+
+    Matches carry their pair key and wait for an outcome of 'a', 'b' or
+    'draw'. A bye is a row with no opponent, an outcome of 'bye' and no agent
+    run: the item sits out, scoring nothing.
+    """
+    for match in drawn.matches:
         db.execute(
-            "INSERT INTO matches(round,slot,input_a,input_b,is_bye) VALUES(?,?,?,?,?)",
-            (round_n, slot, a, b, bye),
+            "INSERT INTO matches(round,slot,input_a,input_b,is_bye,pair_key) "
+            "VALUES(?,?,?,?,0,?)",
+            (drawn.number, match.slot, match.item_a, match.item_b,
+             match.pair_key),
+        )
+    for offset, item_id in enumerate(drawn.byes):
+        db.execute(
+            "INSERT INTO matches(round,slot,input_a,input_b,is_bye,outcome,"
+            "conclusion) VALUES(?,?,?,NULL,1,'bye','bye')",
+            (drawn.number, len(drawn.matches) + offset, item_id),
         )
     db.commit()
 
-
-def match_out_path(workdir: Path, round_n: int, slot: int) -> Path:
-    return workdir / f"r{round_n}" / f"m{slot + 1}.md"
-
+def outcome_for_winner(winner_id: Optional[int]) -> str:
+    """The match outcome: 'a' when winner_id is 1, 'b' when it is 2, and
+    'draw' for everything else -- never a default win for the first input."""
+    if winner_id == 1:
+        return swiss.OUTCOME_A
+    if winner_id == 2:
+        return swiss.OUTCOME_B
+    return swiss.OUTCOME_DRAW
 
 def build_prompt(template: str, label: str, inputs: list[str]) -> str:
     bullets = "\n".join(f"  {i+1}. {p}" for i, p in enumerate(inputs))
@@ -202,35 +263,15 @@ def build_prompt(template: str, label: str, inputs: list[str]) -> str:
             .replace("{INPUTS}", bullets)
             .replace("{N_INPUTS}", str(len(inputs))))
 
-
-# ────────────────────────────────────────────────────────────────────────
-# Match resolution: from DB row → list of input file paths
-# ────────────────────────────────────────────────────────────────────────
 def resolve_match_inputs(db_path: str, workdir: Path, row: tuple) -> list[str]:
-    """Resolve match: refs to absolute paths."""
+    """The files a match compares.
+
+    Always the pool's own inputs: under Swiss no round consumes the previous
+    round's output, so there is nothing to dereference.
+    """
     _mid, _slot, input_a, input_b, _is_bye = row[:5]
+    return [ref for ref in (input_a, input_b) if ref]
 
-    def resolve(ref: Optional[str]) -> Optional[str]:
-        if ref is None:
-            return None
-        if ref.startswith("match:"):
-            db = sqlite3.connect(db_path)
-            mr, ms = db.execute(
-                "SELECT round, slot FROM matches WHERE id=?",
-                (int(ref.split(":", 1)[1]),),
-            ).fetchone()
-            return str(match_out_path(workdir, mr, ms))
-        return ref
-
-    files = [resolve(input_a)]
-    if input_b is not None:
-        files.append(resolve(input_b))
-    return [f for f in files if f]
-
-
-# ────────────────────────────────────────────────────────────────────────
-# Run-match (called from the experiment task callable)
-# ────────────────────────────────────────────────────────────────────────
 def run_match_subprocess(cfg: dict, db_path: str, round_n: int, row: tuple,
                          workdir: Path, trace_id: str, parent_obs_id: str) -> dict:
     """Synchronous: invokes the harness, returns the recorded artifacts.
@@ -240,14 +281,17 @@ def run_match_subprocess(cfg: dict, db_path: str, round_n: int, row: tuple,
         "match_id":    int,
         "slot":        int,
         "is_bye":      bool,
-        "synthesis":   str,            # markdown body (or passthrough for byes)
-        "winner_id":   Optional[int],  # None for bye
+        "synthesis":   str,            # markdown body
+        "winner_id":   Optional[int],  # None when the agent declined to pick
+        "outcome":     str,            # 'a' | 'b' | 'draw'
         "winner_reasoning": str,
         "exit_code":   int,
         "stderr_tail": str,
       }
+
+    Byes never reach here: an item sitting a round out runs no agent.
     """
-    mid, slot, input_a, input_b, is_bye = row[:5]
+    mid, slot, _input_a, _input_b, _is_bye = row[:5]
     outdir = workdir / f"r{round_n}"
     outdir.mkdir(parents=True, exist_ok=True)
     outpath = outdir / f"m{slot + 1}.md"
@@ -255,25 +299,9 @@ def run_match_subprocess(cfg: dict, db_path: str, round_n: int, row: tuple,
 
     files = resolve_match_inputs(db_path, workdir, row)
 
-    # ── Bye: passthrough copy. No agent invocation, no Langfuse trace
-    # bookkeeping beyond the parent span we're already inside. ────────────
-    if is_bye:
-        src = Path(files[0])
-        body = src.read_text().split("\n", 1)
-        header = f"# Match R{round_n}-{slot + 1} — bye (passthrough of {input_a})"
-        out = header + "\n\n" + (body[1] if len(body) > 1 else body[0])
-        outpath.write_text(out)
-        return {
-            "match_id": mid, "slot": slot, "is_bye": True,
-            "synthesis": out, "winner_id": None, "winner_reasoning": "bye",
-            "exit_code": 0, "stderr_tail": "",
-        }
-
     label = f"R{round_n}-{slot + 1}"
     prompt_override = build_prompt(cfg["match_prompt"], label, files)
 
-    # Prepare the IPC tempfiles (winner + synthesis). The harness expects
-    # to allocate its own; we override so we can locate them deterministically.
     fd_out, outfile_ipc = tempfile.mkstemp(prefix="tour-syn-", suffix=".md")
     os.close(fd_out)
     Path(outfile_ipc).unlink(missing_ok=True)
@@ -288,10 +316,6 @@ def run_match_subprocess(cfg: dict, db_path: str, round_n: int, row: tuple,
     if parent_obs_id:
         env["TOURNAMENT_PARENT_OBSERVATION_ID"] = parent_obs_id
 
-    # Pre-pick a slot (the harness can do it itself, but we want to reuse
-    # the same outfile/winner_file paths across the slot lock so the agent
-    # writes where we expect). We bypass the harness's tempfile generation
-    # by exporting HARNESS_OUTFILE / HARNESS_WINNER_FILE directly.
     par = cfg["parallelism"] or 1
     env["HARNESS_SLOT"] = str(slot % max(par, 1))
     env["HARNESS_OUTFILE"] = outfile_ipc
@@ -311,7 +335,6 @@ def run_match_subprocess(cfg: dict, db_path: str, round_n: int, row: tuple,
     if Path(outfile_ipc).exists():
         synthesis = Path(outfile_ipc).read_text()
     elif outpath.exists():
-        # Fallback: harness echoed to stdout, which we captured to outpath.
         synthesis = outpath.read_text()
     if Path(winner_file).exists():
         try:
@@ -321,23 +344,19 @@ def run_match_subprocess(cfg: dict, db_path: str, round_n: int, row: tuple,
         except Exception as e:
             tail += f"\n[winner_file parse error: {e!r}]"
 
-    # Best-effort cleanup of IPC tempfiles.
     Path(outfile_ipc).unlink(missing_ok=True)
     Path(winner_file).unlink(missing_ok=True)
 
     return {
         "match_id": mid, "slot": slot, "is_bye": False,
         "synthesis": synthesis, "winner_id": winner_id,
+        "outcome": outcome_for_winner(winner_id),
         "winner_reasoning": winner_reasoning,
         "exit_code": proc.returncode, "stderr_tail": tail,
     }
 
-
-# ────────────────────────────────────────────────────────────────────────
-# Evaluators
-# ────────────────────────────────────────────────────────────────────────
 def make_required_sections_evaluator(required: list[str]):
-    from langfuse import Evaluation  # lazy import
+    from langfuse import Evaluation
 
     def evaluator(*, input: Any, output: Any, expected_output: Any = None,
                   metadata: Optional[dict] = None) -> Evaluation:  # type: ignore[valid-type]
@@ -354,9 +373,8 @@ def make_required_sections_evaluator(required: list[str]):
 
     return evaluator
 
-
 def make_word_count_evaluator(max_words: int):
-    from langfuse import Evaluation  # lazy import
+    from langfuse import Evaluation
 
     def evaluator(*, input: Any, output: Any, expected_output: Any = None,
                   metadata: Optional[dict] = None) -> Evaluation:  # type: ignore[valid-type]
@@ -371,7 +389,6 @@ def make_word_count_evaluator(max_words: int):
         )
 
     return evaluator
-
 
 def make_judge_evaluator(judge_cfg: dict, criteria: str):
     """LLM-as-judge: scores synthesis quality 0.0–1.0.
@@ -400,7 +417,7 @@ def make_judge_evaluator(judge_cfg: dict, criteria: str):
 
     def score_synthesis(*, input: Any, output: Any, expected_output: Any = None,
                        metadata: Optional[dict] = None):
-        from langfuse import Evaluation  # lazy import
+        from langfuse import Evaluation
 
         out = output if isinstance(output, dict) else {"synthesis": str(output or "")}
         synthesis = (out.get("synthesis") or "")[:6000]
@@ -455,16 +472,11 @@ def make_judge_evaluator(judge_cfg: dict, criteria: str):
 
     return score_synthesis
 
-
-# ────────────────────────────────────────────────────────────────────────
-# Round runner — wraps Langfuse.run_experiment
-# ────────────────────────────────────────────────────────────────────────
 def ensure_dataset(lf: Any, dataset_name: str) -> None:
     try:
         lf.get_dataset(dataset_name)
     except Exception:
         lf.create_dataset(name=dataset_name, description="data-tournaments bracket")
-
 
 def upsert_dataset_items_for_round(lf: Any, dataset_name: str,
                                    db_path: str, workdir: Path,
@@ -501,29 +513,27 @@ def upsert_dataset_items_for_round(lf: Any, dataset_name: str,
             item_id_for_match[mid] = ""
     return item_id_for_match
 
-
 def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
               lf: Any, dataset_name: str) -> None:
     rows = db.execute(
-        "SELECT id,slot,input_a,input_b,is_bye FROM matches WHERE round=? ORDER BY slot",
+        "SELECT id,slot,input_a,input_b,is_bye FROM matches "
+        "WHERE round=? AND is_bye=0 ORDER BY slot",
         (round_n,),
     ).fetchall()
+    byes = db.execute(
+        "SELECT input_a FROM matches WHERE round=? AND is_bye=1", (round_n,)
+    ).fetchall()
     log(f"\n── Round {round_n}: {len(rows)} match{'es' if len(rows)!=1 else ''} "
-        f"({sum(1 for r in rows if r[4])} bye) ──")
+        f"({len(byes)} bye) ──")
 
     par = cfg["parallelism"] or 1
     par = max(1, min(par, len(rows)))
     log(f"  harness={HARNESS.name} parallelism={par}  advance={cfg['advance']}")
 
-    # Dataset items for this round (created on the fly so derived rounds work).
     item_id_for_match = (upsert_dataset_items_for_round(
         lf, dataset_name, cfg["db_path"], workdir, round_n, rows,
     ) if lf is not None else {mid: "" for (mid, *_rest) in rows})
 
-    # Build experiment data list. Pair the row with the dataset_item_id so
-    # the task can use it; the data items are dicts (not Langfuse DatasetItem
-    # objects) — we let run_experiment trace each task with a fresh trace
-    # then we manually attach the dataset run linkage via metadata.
     data: list[dict] = []
     for row in rows:
         mid, slot, _a, _b, is_bye = row[:5]
@@ -542,14 +552,11 @@ def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
             },
         })
 
-    # ── task: invoked once per match, inside the experiment-item span ────
     def task(*, item: dict, **_kwargs) -> dict:
         in_obj = item["input"]
         mid = in_obj["match_id"]
         slot = in_obj["slot"]
         is_bye = in_obj["is_bye"]
-        # Find the original DB row again (cheap; we already have it but it
-        # pairs better with item dicts to refetch).
         row = next(r for r in rows if r[0] == mid)
 
         trace_id = ""
@@ -566,22 +573,18 @@ def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
             trace_id=trace_id, parent_obs_id=parent_obs,
         )
 
-        # Mirror the trace_id back into SQLite for cross-referencing.
         if trace_id:
             db_local = sqlite3.connect(cfg["db_path"])
             db_local.execute("UPDATE matches SET trace_id=? WHERE id=?", (trace_id, mid))
             db_local.commit()
 
         if result["exit_code"] != 0 and not is_bye:
-            # Surface failure into the trace by raising — run_experiment
-            # will log it and continue with other items.
             raise RuntimeError(
                 f"match {mid} (R{round_n}-{slot+1}) failed exit={result['exit_code']}: "
                 f"{result['stderr_tail'][:200]}"
             )
         return result
 
-    # ── evaluators ────────────────────────────────────────────────────────
     evaluators = []
     evaluators.append(make_required_sections_evaluator(cfg["required_sections"]))
     evaluators.append(make_word_count_evaluator(int(cfg["max_words"])))
@@ -595,7 +598,6 @@ def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
         )
         evaluators.append(make_judge_evaluator(judge_cfg, criteria_summary))
 
-    # ── run the experiment (or fall back to plain threadpool if no LF) ───
     if lf is not None:
         run_name = f"r{round_n}"
         log(f"  langfuse: dataset={dataset_name!r} run={run_name!r}")
@@ -615,7 +617,6 @@ def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
         )
         item_results = list(getattr(result, "item_results", []) or [])
     else:
-        # Local execution path (no Langfuse credentials). Still works.
         log("  langfuse: disabled (no LANGFUSE_PUBLIC_KEY/SECRET_KEY)")
         item_results = []
 
@@ -636,7 +637,6 @@ def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
             for r in ex.map(_run_one, data):
                 item_results.append(r)
 
-    # ── persist conclusions ─────────────────────────────────────────────
     advance_mode = cfg["advance"]
     failures: list[str] = []
     for ir in item_results:
@@ -651,11 +651,11 @@ def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
             continue
         synthesis = out.get("synthesis") or ""
         winner_id = out.get("winner_id")
+        outcome = out.get("outcome") or outcome_for_winner(winner_id)
         winner_reasoning = out.get("winner_reasoning") or ""
         is_bye = bool(out.get("is_bye"))
 
-        # Decide what advances.
-        advancing: str = synthesis  # default
+        advancing: str = synthesis
         if advance_mode == "winner" and not is_bye and winner_id in (1, 2):
             row = next(r for r in rows if r[0] == mid)
             files = resolve_match_inputs(cfg["db_path"], workdir, row)
@@ -663,26 +663,17 @@ def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
             if chosen and Path(chosen).exists():
                 advancing = Path(chosen).read_text(encoding="utf-8", errors="replace")
             else:
-                advancing = synthesis  # fallback
+                advancing = synthesis
 
         db.execute(
-            "UPDATE matches SET conclusion=?, synthesis=?, winner_id=?, winner_reasoning=? "
-            "WHERE id=?",
-            (advancing, synthesis, winner_id, winner_reasoning, mid),
+            "UPDATE matches SET conclusion=?, synthesis=?, winner_id=?, "
+            "outcome=?, winner_reasoning=? WHERE id=?",
+            (advancing, synthesis, winner_id, outcome, winner_reasoning, mid),
         )
     db.commit()
 
-    # ── Judgement-fabric hook ──────────────────────────────────────────
-    # For every match that produced a conclusion this round, enqueue a
-    # pending row against every active JobConfiguration for the
-    # `code-style-tournament` rubric. The LLM-judge config gets drained
-    # synchronously below; the human-rater config sits in the queue for
-    # the LiveView UI to pick up.
-    #
-    # Failures here MUST NOT abort the round — judgement is observation,
-    # not a gate. Wrap the whole thing in a broad try/except.
     try:
-        import judgement  # bin/judgement.py
+        import judgement
         judgement.init_db()
         rated_ids = [
             mid for (mid, *_rest) in db.execute(
@@ -699,8 +690,6 @@ def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
             ))
         if enqueued:
             log(f"  judgement: enqueued {enqueued} pending row(s)")
-            # Drain LLM judges if their endpoint is reachable. Quiet on
-            # failure — the human-rater path stays valuable on its own.
             try:
                 res = judgement.drain_llm_queue(limit=enqueued)
                 if res["ok"] or res["error"]:
@@ -711,7 +700,6 @@ def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
     except Exception as e:
         log(f"  judgement: hook failed ({type(e).__name__}: {e}); continuing")
 
-    # Re-check for any matches that didn't get a conclusion (failure mode).
     incomplete = db.execute(
         "SELECT id, slot FROM matches WHERE round=? AND (conclusion IS NULL OR conclusion='') "
         "AND is_bye=0",
@@ -724,10 +712,22 @@ def run_round(cfg: dict, db: sqlite3.Connection, round_n: int, workdir: Path,
             log(f"  incomplete: match {mid} (slot {slot})")
         raise SystemExit(f"round {round_n} had {len(incomplete) + len(failures)} failure(s); aborting")
 
+def played_rounds(db: sqlite3.Connection) -> int:
+    return db.execute(
+        "SELECT COUNT(DISTINCT round) FROM matches WHERE outcome IS NOT NULL"
+    ).fetchone()[0]
 
-# ────────────────────────────────────────────────────────────────────────
-# Main
-# ────────────────────────────────────────────────────────────────────────
+def resume_round(db: sqlite3.Connection) -> int:
+    """The round to run next: the lowest one still holding an unplayed match,
+    or the one after the last round on record."""
+    unfinished = db.execute(
+        "SELECT MIN(round) FROM matches WHERE is_bye=0 AND outcome IS NULL"
+    ).fetchone()[0]
+    if unfinished is not None:
+        return int(unfinished)
+    last = db.execute("SELECT MAX(round) FROM matches").fetchone()[0]
+    return 1 if last is None else int(last) + 1
+
 def maybe_init_langfuse(cfg: dict):
     if not (os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")):
         return None
@@ -740,7 +740,6 @@ def maybe_init_langfuse(cfg: dict):
         "LANGFUSE_HOST", "https://cloud.langfuse.com"
     )
     return Langfuse(host=host)
-
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -765,65 +764,36 @@ def main() -> None:
         except Exception as e:
             log(f"warn: ensure_dataset failed: {e!r}")
 
-    # Seed round 1 if empty
-    existing_rounds = [r[0] for r in db.execute(
-        "SELECT DISTINCT round FROM matches ORDER BY round").fetchall()]
-    if not existing_rounds:
-        log(f"═══ {cfg['name']}: seeding round 1 from {len(cfg['inputs'])} inputs ═══")
-        random_pair(db, 1, cfg["inputs"], cfg["seed"])
-        existing_rounds = [1]
+    total_rounds = swiss.rounds_total(build_pool(cfg, db))
+    start_round = resume_round(db)
+    if start_round > 1:
+        log(f"resuming at round {start_round} of {total_rounds}")
 
-    # Figure out starting round
-    last_round = max(existing_rounds)
-    last_round_cnt = db.execute(
-        "SELECT COUNT(*) FROM matches WHERE round=? AND conclusion IS NOT NULL",
-        (last_round,),
-    ).fetchone()[0]
-    last_round_total = db.execute(
-        "SELECT COUNT(*) FROM matches WHERE round=?", (last_round,)).fetchone()[0]
-
-    start_round = last_round if last_round_cnt < last_round_total else last_round + 1
-    if last_round_cnt < last_round_total:
-        log(f"resuming round {start_round} ({last_round_cnt}/{last_round_total} done)")
-
-    # Run rounds until a single winner
-    round_n = start_round
-    while True:
+    for round_n in range(start_round, total_rounds + 1):
         if not db.execute(
             "SELECT 1 FROM matches WHERE round=?", (round_n,)
         ).fetchone():
-            pool = [f"match:{mid}" for (mid,) in db.execute(
-                "SELECT id FROM matches WHERE round=? ORDER BY slot",
-                (round_n - 1,)).fetchall()]
-            if len(pool) < 2:
+            pool = build_pool(cfg, db)
+            drawn = swiss.pair_round(pool, round_n)
+            if not drawn.matches:
+                log(f"round {round_n} has no legal pairing left; stopping early")
                 break
-            random_pair(db, round_n, pool, cfg["seed"])
-
+            log(f"═══ {cfg['name']}: round {round_n}/{total_rounds} — "
+                f"{len(drawn.matches)} match(es), {len(drawn.byes)} bye ═══")
+            insert_round(db, drawn)
         run_round(cfg, db, round_n, workdir, lf, dataset_name)
 
-        count = db.execute(
-            "SELECT COUNT(*) FROM matches WHERE round=?", (round_n,)).fetchone()[0]
-        if count == 1:
-            log(f"\n═══ Tournament complete (round {round_n} had 1 match) ═══")
-            break
-        round_n += 1
-
-    # Print final conclusion
-    final = db.execute(
-        "SELECT conclusion FROM matches "
-        "WHERE round=(SELECT MAX(round) FROM matches) ORDER BY slot LIMIT 1"
-    ).fetchone()[0]
+    pool = build_pool(cfg, db)
     log("\n" + "─" * 72)
-    log("FINAL RESULT")
+    log(f"STANDINGS after {played_rounds(db)} of {total_rounds} round(s)")
     log("─" * 72)
-    print(final)
+    print(swiss.format_standings(pool))
 
     if lf is not None:
         try:
             lf.flush()
         except Exception:
             pass
-
 
 if __name__ == "__main__":
     main()

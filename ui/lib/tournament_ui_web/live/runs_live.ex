@@ -171,6 +171,7 @@ defmodule TournamentUiWeb.RunsLive do
     ~H"""
     <.workspace_page
       current={:runs}
+      flash={@flash}
       title={@workflow_id}
       subtitle="Release workflow run: stage timeline and approval trail."
     >
@@ -393,6 +394,7 @@ defmodule TournamentUiWeb.RunsLive do
     ~H"""
     <.workspace_page
       current={:runs}
+      flash={@flash}
       title="Runs"
       subtitle="Release workflow executions: Temporal projection with approval trail."
     >

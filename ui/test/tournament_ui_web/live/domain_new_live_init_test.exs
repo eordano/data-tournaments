@@ -12,7 +12,9 @@ defmodule TournamentUiWeb.DomainNewLiveInitTest do
     previous_home = System.get_env("DATA_TOURNAMENTS_HOME")
     previous_cli = System.get_env("JUDGEMENT_CLI_CMD")
 
-    home = "/tmp/dt-domainnew-init-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-domainnew-init-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 

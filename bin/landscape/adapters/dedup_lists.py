@@ -29,12 +29,9 @@ from bin.landscape.evidence import (
     TrustTier,
 )
 
-
 class DedupPayloadError(ValueError):
     """dedup_lists config is missing every known list."""
 
-
-# config key -> (kind label, dedup-role sentence for why_selected)
 _KINDS = {
     "open_prs_tsv": (
         "open_prs",
@@ -49,7 +46,6 @@ _KINDS = {
         "dedup gate: prior campaign lanes are OUT",
     ),
 }
-
 
 def list_ref(
     kind: str,
@@ -82,7 +78,6 @@ def list_ref(
         browsable_link=None,
         why_selected=f"{why} — {role}",
     )
-
 
 def collect(
     config: dict, *, why: str, limits: Optional[dict] = None

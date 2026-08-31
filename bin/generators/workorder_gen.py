@@ -14,8 +14,6 @@ import dspy
 from bin.generators.card_gen import CardGen
 from bin.workorder import WorkOrderDraft
 
-#: Appended to every generator prompt (see card_gen.OUTPUT_CONTRACT for the
-#: rationale — answer-first, bounded, payload before any prose).
 WORK_ORDER_CONTRACT = (
     "Output contract: emit the machine-parseable `work_orders` payload "
     "immediately, before any prose, analysis, or explanation. Keep the "
@@ -31,7 +29,6 @@ WORK_ORDER_CONTRACT = (
     "dates — those are supplied by the system. Any commentary must come "
     "after the payload, never before it."
 )
-
 
 class WorkOrderGenSig(dspy.Signature):
     """Extract zero or more engineering work orders from a corpus item.
@@ -49,7 +46,6 @@ class WorkOrderGenSig(dspy.Signature):
             "work order over several thin ones."
         )
     )
-
 
 class WorkOrderGen(CardGen):
     """WorkOrder-producing generator with CardGen's hardened failure paths."""

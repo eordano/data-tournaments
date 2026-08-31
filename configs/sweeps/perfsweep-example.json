@@ -1,0 +1,32 @@
+{
+  "kind": "perfsweep",
+  "corpus": [
+    {
+      "adapter": "sentry_csv",
+      "config": { "path": "/tmp/data-tournaments/uploads/sentry-perf.csv" }
+    }
+  ],
+  "intake": { "max_candidates": 15, "rationale_required": true },
+  "panel": {
+    "lenses": [
+      { "name": "root-cause", "prompt_ref": "lens:root-cause", "burden": "refute" },
+      { "name": "perf-budget", "prompt_ref": "lens:perf-budget", "burden": "refute" }
+    ],
+    "human": { "rubric": "perf-workorder", "judgement_kind": "single", "required": true },
+    "quorum": "all_lenses_and_human"
+  },
+  "rounds": {
+    "max": 3,
+    "batching": "required",
+    "convergence": "no_new_confirmed_findings",
+    "repair_max_cycles_per_finding": 1
+  },
+  "validation": {
+    "mode": "perf_budget",
+    "perf_budgets": [
+      { "metric": "allocs_per_1000_msgs", "budget": 0, "direction": "max" },
+      { "metric": "frame_ms_p95", "budget": 16.6, "direction": "max" }
+    ]
+  },
+  "publish": { "gate": "human", "granularity": "branch-per-finding" }
+}

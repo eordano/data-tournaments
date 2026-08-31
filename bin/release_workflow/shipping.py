@@ -54,9 +54,6 @@ from typing import Any, Callable, Optional
 GITHUB_API_ROOT = "https://api.github.com"
 UCB_API_ROOT = "https://build-api.cloud.unity3d.com/api/v1"
 
-#: Per-action approval scopes — push / PR-create / promote are separately
-#: approvable actions (see module docstring). Consumed by the approvals
-#: layer; exposed here so shipping and approvals agree on the names.
 ACTION_SCOPES = {
     "push": "ship:push:*",
     "pr": "ship:pr:*",
@@ -67,15 +64,12 @@ MANIFEST_SCHEMA_VERSION = 1
 
 Transport = Callable[..., Any]
 
-
 class ShippingPayloadError(ValueError):
     """A remote API payload is not the shape we expect. Raised loudly —
     a malformed response is never mapped to a fake success."""
 
-
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 def _urllib_transport(headers: dict) -> Transport:
     """Build the live urllib transport. ``headers`` carries the auth
@@ -96,10 +90,6 @@ def _urllib_transport(headers: dict) -> Transport:
         return json.loads(body) if body.strip() else {}
 
     return transport
-
-
-# ── GitHub: PRs + CI ─────────────────────────────────────────────────────
-
 
 class GitHubShipper:
     """PR creation/update + CI status against the GitHub REST v3 API.
@@ -142,8 +132,6 @@ class GitHubShipper:
                 "User-Agent": "data-tournaments-shipping",
             }
         )
-
-    # -- PRs ---------------------------------------------------------------
 
     def create_or_update_pr(
         self, branch: str, base: str, title: str, body: str
@@ -195,8 +183,6 @@ class GitHubShipper:
             "action": "created",
         }
 
-    # -- CI ----------------------------------------------------------------
-
     def get_ci_status(self, sha: str) -> dict:
         """Map the check-runs API shape to a coarse CI state.
 
@@ -229,10 +215,6 @@ class GitHubShipper:
         else:
             state = "failure"
         return {"state": state, "checks": checks}
-
-
-# ── Unity Cloud Build ────────────────────────────────────────────────────
-
 
 class UCBTracker:
     """Trigger + poll Unity Cloud Build builds (field names per
@@ -329,10 +311,6 @@ class UCBTracker:
             out["artifact_url"] = href
         return out
 
-
-# ── Canary + rollback contract ───────────────────────────────────────────
-
-
 def _urllib_probe(url: str, timeout: float = 10.0) -> tuple[int, str]:
     """Default canary probe: plain GET, returns (status_code, detail)."""
     req = urllib.request.Request(
@@ -340,7 +318,6 @@ def _urllib_probe(url: str, timeout: float = 10.0) -> tuple[int, str]:
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.status, f"HTTP {resp.status}"
-
 
 class CanaryMonitor:
     """Point-in-time canary health + the typed rollback contract.
@@ -358,7 +335,7 @@ class CanaryMonitor:
         """Returns ``{healthy: bool, detail: str}``. 2xx/3xx = healthy."""
         try:
             status, detail = self._probe(url)
-        except Exception as exc:  # DNS, timeout, refused, TLS, ...
+        except Exception as exc:
             return {
                 "healthy": False,
                 "detail": f"probe error: {type(exc).__name__}: {exc}",
@@ -391,10 +368,6 @@ class CanaryMonitor:
                 "never pretends to have run them"
             ),
         }
-
-
-# ── Release manifest (product-model §B6) ─────────────────────────────────
-
 
 def build_release_manifest(
     *,

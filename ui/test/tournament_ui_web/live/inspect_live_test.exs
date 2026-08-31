@@ -3,7 +3,7 @@ defmodule TournamentUiWeb.InspectLiveTest do
   import Phoenix.LiveViewTest
 
   setup do
-    home = "/tmp/dt-inspect-#{System.unique_integer([:positive])}"
+    home = "/tmp/dt-inspect-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 

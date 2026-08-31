@@ -15,26 +15,19 @@ Two modes:
 from __future__ import annotations
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
-# When invoked directly (not via `python -m`), make sure the repo root is on
-# sys.path so `from bin import ...` works regardless of cwd.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-# Loading the repo .env is mandatory for every CLI entry point: Phoenix
-# shell-outs inherit only the server's environment, and without the key vars
-# the drafting LM silently falls back to the keyless default endpoint.
 from bin.env_loader import load_dotenv as _load_dotenv  # noqa: E402
 
 _load_dotenv()
 
 from bin import domains as _domains  # noqa: E402
 from bin import prompts as _prompts  # noqa: E402
-
 
 def _sample_from_corpus(spec: dict, n: int = 3) -> list[dict]:
     """Cheaply pull up to `n` items from the corpus so DomainBuilder can peek."""
@@ -66,7 +59,6 @@ def _sample_from_corpus(spec: dict, n: int = 3) -> list[dict]:
             pass
     return out
 
-
 def cmd_draft(args):
     import dspy
     from bin.generators.builder import DomainBuilder
@@ -88,7 +80,6 @@ def cmd_draft(args):
         "generator_prompt": draft.generator_prompt,
         "judge_prompt": draft.judge_prompt,
     }))
-
 
 def cmd_save(args):
     corpus_spec = json.loads(args.corpus_spec)
@@ -114,7 +105,6 @@ def cmd_save(args):
         judge_prompt=f"judge-instructions:{name}",
     )
     print(json.dumps({"domain_id": domain_id, "name": name}))
-
 
 def cmd_edit(args):
     """Update an existing domain. Pushes new prompt versions (idempotent if
@@ -143,7 +133,6 @@ def cmd_edit(args):
     )
     print(json.dumps({"name": name, "updated": True}))
 
-
 def _error_hint(e: Exception) -> str:
     """Actionable guidance for common LM failures, without leaking secrets."""
     text = f"{type(e).__name__}: {e}"
@@ -151,11 +140,10 @@ def _error_hint(e: Exception) -> str:
         return (
             "\nHINT: the drafting LM could not authenticate or connect. "
             "Set OPENROUTER_API_KEY in the environment or the repo .env "
-            "(or point LLM_BASE_URL + LLM_GATEWAY_API_KEY at your own endpoint), "
+            "(or point LLM_BASE_URL + LLM_HJKL_API_KEY at your own endpoint), "
             "then retry."
         )
     return ""
-
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -178,7 +166,6 @@ def main():
     except Exception as e:
         print(f"ERROR: {type(e).__name__}: {e}{_error_hint(e)}", file=sys.stderr)
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

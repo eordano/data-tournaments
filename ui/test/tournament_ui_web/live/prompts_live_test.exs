@@ -1,5 +1,7 @@
 defmodule TournamentUiWeb.PromptsLiveTest do
-  use TournamentUiWeb.ConnCase
+  # Mutates process-global env (DATA_TOURNAMENTS_HOME) — must not run
+  # alongside other tests.
+  use TournamentUiWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
   alias TournamentUi.LangfusePrompts
@@ -15,14 +17,58 @@ defmodule TournamentUiWeb.PromptsLiveTest do
              live(conn, "/prompts")
   end
 
+  @domain_ddl """
+  CREATE TABLE IF NOT EXISTS domain (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    generator_prompt TEXT NOT NULL,
+    judge_prompt TEXT NOT NULL,
+    rubric TEXT NOT NULL DEFAULT 'pair-wheel-v2',
+    corpus_source TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active'
+  );
+  CREATE TABLE IF NOT EXISTS pending_judgement (id INTEGER PRIMARY KEY);
+  """
+
+  # The optimizer form's rubric is read off the fabric's own schema default,
+  # so this suite seeds a data home rather than inheriting whichever one ran
+  # last. A hidden input pinned to a hardcoded rubric is exactly what left
+  # this form posting a template nobody seeds after the last rename.
+  defp seed_fabric!(home) do
+    script =
+      "import sqlite3\n" <>
+        "db = sqlite3.connect(#{inspect(Path.join(home, "judgements.db"))})\n" <>
+        "db.executescript(#{inspect(@domain_ddl)})\n" <>
+        "db.commit()\n"
+
+    {out, status} = System.cmd("python3", ["-c", script], stderr_to_stdout: true)
+    assert status == 0, "seed failed: #{out}"
+  end
+
   setup do
     previous_backend = Application.get_env(:tournament_ui, :prompt_backend)
     Application.put_env(:tournament_ui, :prompt_backend, "langfuse")
+
+    previous_home = System.get_env("DATA_TOURNAMENTS_HOME")
+
+    home =
+      "/tmp/dt-prompts-live-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
+    File.mkdir_p!(home)
+    System.put_env("DATA_TOURNAMENTS_HOME", home)
+    seed_fabric!(home)
 
     on_exit(fn ->
       if previous_backend,
         do: Application.put_env(:tournament_ui, :prompt_backend, previous_backend),
         else: Application.delete_env(:tournament_ui, :prompt_backend)
+
+      if previous_home,
+        do: System.put_env("DATA_TOURNAMENTS_HOME", previous_home),
+        else: System.delete_env("DATA_TOURNAMENTS_HOME")
+
+      File.rm_rf!(home)
     end)
 
     :ok
@@ -129,7 +175,8 @@ defmodule TournamentUiWeb.PromptsLiveTest do
     # The form has the right action + carries the rubric hidden input and both selects.
     assert html =~ ~s(phx-submit="optimize")
     assert html =~ ~s(name="rubric")
-    assert html =~ ~s(value="card-prioritizer-v0")
+    assert html =~ ~s(value="pair-wheel-v2")
+    assert TournamentUi.Judgement.default_rubric() == "pair-wheel-v2"
     assert html =~ ~s(name="prompt_name")
     assert html =~ ~s(name="judge_model")
     assert html =~ ~s(name="reflection_model")

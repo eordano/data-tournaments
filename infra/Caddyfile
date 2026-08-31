@@ -24,7 +24,7 @@
 # Configuration via env vars (with sensible defaults):
 #
 #   PHOENIX_UPSTREAM   default localhost:4777   — where Phoenix is bound
-#   LANGFUSE_UPSTREAM  default langfuse.example  — where Langfuse lives
+#   LANGFUSE_UPSTREAM  default langfuse.example.com  — where Langfuse lives
 #                                                 (FQDN over HTTPS, or host:port)
 #   PROXY_LISTEN       default :8080            — what Caddy binds locally
 
@@ -59,8 +59,8 @@
 	# `handle_path /lf/*` strips the matched `/lf` prefix and forwards the
 	# rest, so /lf/api/public/v2/... → /api/public/v2/... upstream.
 	handle_path /lf/* {
-		reverse_proxy https://{$LANGFUSE_UPSTREAM:langfuse.example} {
-			header_up Host {$LANGFUSE_UPSTREAM:langfuse.example}
+		reverse_proxy https://{$LANGFUSE_UPSTREAM:langfuse.example.com} {
+			header_up Host {$LANGFUSE_UPSTREAM:langfuse.example.com}
 			header_up X-Forwarded-Proto https
 		}
 	}
@@ -88,7 +88,7 @@
 # }
 #
 # langfuse.example.com {
-# 	reverse_proxy https://{$LANGFUSE_UPSTREAM:langfuse.example} {
-# 		header_up Host {$LANGFUSE_UPSTREAM:langfuse.example}
+# 	reverse_proxy https://{$LANGFUSE_UPSTREAM:langfuse.example.com} {
+# 		header_up Host {$LANGFUSE_UPSTREAM:langfuse.example.com}
 # 	}
 # }

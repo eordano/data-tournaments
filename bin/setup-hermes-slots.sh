@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# setup-hermes-slots.sh [N]  — register N Hermes MCP slots in ~/.hermes/config.yaml.
-#
-# Builds the flake-pinned `tournament-mcp-server` binary and writes its
-# absolute /nix/store path into each slot's `command:` field. That way
-# Hermes always invokes the right Python (with langfuse + httpx baked in)
-# regardless of which shell spawned it.
-#
-# Re-run this whenever flake.nix changes the pinned langfuse version.
 set -euo pipefail
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
@@ -14,11 +6,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 N="${1:-4}"
 YAML=~/.hermes/config.yaml
 
-# Repo root: parent of bin/.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Build (or pull from cache) the flake's mcp-server. The store path is
-# stable as long as flake.nix + bin/hermes_mcp_server.py don't change.
 echo "Building tournament-mcp-server from $REPO_ROOT/flake.nix ..."
 MCP_OUT=$(nix build "path:$REPO_ROOT#mcp-server" --print-out-paths --no-link)
 MCP_BIN="$MCP_OUT/bin/tournament-mcp-server"

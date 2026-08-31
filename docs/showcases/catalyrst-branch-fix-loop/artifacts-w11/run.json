@@ -2,12 +2,12 @@
   "walkthrough": "catalyrst-branch-fix-loop WAVE-11 (strict causal order, live-agent authored)",
   "mandate": "team of engineers automating bugfixes; user-devs at the END; every branch validated ALONE at pinned counts; blockers fixed",
   "target_repo": {
-    "remote": "https://github.com/eordano/catalyrst",
+    "remote": "https://github.com/YOUR_ORG/catalyrst",
     "upstream_sha": "009d0fe5dbce2689b1946a64a196a8a9e3bf99d8",
     "campaign_base": "b1601397651ca592061afbbfbb09417ee1895413",
     "clone": "/tmp/catalyrst-wave11"
   },
-  "platform_head_at_run": "REDACTED",
+  "platform_head_at_run": "668ea3a79815c386b65a8b2766c2a9979d88036a",
   "strict_causal_order": [
     "1 intake (3 FIXTURE sentry signals -> findings + frozen evidence)",
     "2 dossier (CONFIRM lens + validation row incl. oracle note) -> confirmed_validated",
@@ -94,7 +94,7 @@
       "id": 1,
       "fix_branch_id": 1,
       "tested_sha": "3d2b3b273c63191c8b20d74334e65a381ed8a992",
-      "reviewer": "esteban",
+      "reviewer": "changeme",
       "decision": "approve",
       "approval_event_id": 1
     }
@@ -104,22 +104,22 @@
       "id": 1,
       "temporal_workflow_id": "branchfix:fix/w11-cid-exact-length:3d2b3b273c63",
       "decision": "approved",
-      "approver": "esteban"
+      "approver": "changeme"
     },
     {
       "id": 2,
-      "temporal_workflow_id": "release:eordano/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
+      "temporal_workflow_id": "release:YOUR_ORG/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
       "decision": "approved",
-      "approver": "esteban"
+      "approver": "changeme"
     }
   ],
   "ship_rows": [
     {
       "id": 1,
       "fix_branch_id": 1,
-      "workflow_id": "release:eordano/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
+      "workflow_id": "release:YOUR_ORG/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
       "tested_sha": "3d2b3b273c63191c8b20d74334e65a381ed8a992",
-      "requested_by": "esteban",
+      "requested_by": "changeme",
       "approval_review_id": 1,
       "validation_id": 1,
       "created_at": "2026-08-17 22:47:40"
@@ -127,7 +127,7 @@
   ],
   "workflow_runs": [
     {
-      "temporal_workflow_id": "release:eordano/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
+      "temporal_workflow_id": "release:YOUR_ORG/catalyrst:3d2b3b273c63191c8b20d74334e65a381ed8a992",
       "status": "done"
     }
   ],

@@ -33,7 +33,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 def _seed_one_pending(tmp_data_home) -> int:
     """One pending row against the seeded llm config; returns its id."""
     db = sqlite3.connect(str(tmp_data_home / "judgements.db"))
@@ -52,7 +51,6 @@ def _seed_one_pending(tmp_data_home) -> int:
     db.close()
     return pid
 
-
 @pytest.fixture
 def judgement_mod(tmp_data_home, fake_langfuse, monkeypatch):
     monkeypatch.setattr("bin.prompts._client_factory", lambda: fake_langfuse.as_client())
@@ -62,7 +60,6 @@ def judgement_mod(tmp_data_home, fake_langfuse, monkeypatch):
     importlib.reload(judgement)
     judgement.init_db()
     return judgement
-
 
 def test_concurrent_write_judgement_cannot_double_rate(
     judgement_mod, tmp_data_home, monkeypatch
@@ -93,14 +90,10 @@ def test_concurrent_write_judgement_cannot_double_rate(
 
         def execute(self, sql, *args):
             if state["armed"] and sql.lstrip().lower().startswith("insert into score"):
-                # B has passed its "already resolved" pre-check and is about
-                # to take its first write. Worker A now completes the same
-                # row end-to-end (this is the real interleaving two drain
-                # processes produce, minus the nondeterminism).
                 state["armed"] = False
                 state["rating_a"] = judgement.write_judgement(
                     pending_id=pid,
-                    verdict="tie-both-weak",
+                    verdict="tie",
                     confidence="low",
                     rationale=None,
                     rater={"type": "llm", "model": "worker-a"},
@@ -119,7 +112,7 @@ def test_concurrent_write_judgement_cannot_double_rate(
     with pytest.raises(RuntimeError, match="already resolved"):
         judgement.write_judgement(
             pending_id=pid,
-            verdict="a-marginally-better",
+            verdict="a-wins",
             confidence="mid",
             rationale="worker-b duplicate",
             rater={"type": "llm", "model": "worker-b"},
@@ -136,7 +129,6 @@ def test_concurrent_write_judgement_cannot_double_rate(
     ).fetchone()
     db.close()
 
-    # Exactly one judgement (verdict + confidence), all worker A's.
     assert len(scores) == 2, f"duplicate rating written: {len(scores)} score rows"
     assert {s["rating_id"] for s in scores} == {state["rating_a"]}
     assert all(
@@ -144,7 +136,6 @@ def test_concurrent_write_judgement_cannot_double_rate(
     )
     assert prow["status"] == "done"
     assert prow["rating_id"] == state["rating_a"]
-
 
 def test_race_loser_cannot_flip_done_row_to_error(
     judgement_mod, tmp_data_home, monkeypatch
@@ -164,16 +155,15 @@ def test_race_loser_cannot_flip_done_row_to_error(
             pass
 
         def __call__(self, **_cards):
-            # While B's "LLM call" runs, worker A completes the row.
             rating_a["id"] = judgement.write_judgement(
                 pending_id=pid,
-                verdict="tie-both-weak",
+                verdict="tie",
                 confidence="low",
                 rationale=None,
                 rater={"type": "llm", "model": "worker-a"},
             )
             return SimpleNamespace(
-                verdict="a-marginally-better", confidence="mid", rationale="B's take",
+                verdict="a-wins", confidence="mid", rationale="B's take",
             )
 
     monkeypatch.setattr("bin.judges.match_judge.MatchJudge", RacingJudge)
@@ -199,7 +189,6 @@ def test_race_loser_cannot_flip_done_row_to_error(
     assert prow["rating_id"] == rating_a["id"]
     assert prow["error_message"] is None
     assert n_scores == 2
-
 
 def test_error_status_still_recorded_for_genuine_failures(
     judgement_mod, tmp_data_home, monkeypatch

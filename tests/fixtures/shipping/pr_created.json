@@ -3,7 +3,7 @@
   "state": "open",
   "title": "release: unity-explorer wave-8",
   "html_url": "https://github.com/decentraland/unity-explorer/pull/4300",
-  "head": {"ref": "release/wave-8", "sha": "REDACTED"},
-  "base": {"ref": "dev", "sha": "REDACTED"},
+  "head": {"ref": "release/wave-8", "sha": "0123456789abcdef0123456789abcdef01234567"},
+  "base": {"ref": "dev", "sha": "c08a72ce5187aaaabbbbccccddddeeeeffff0000"},
   "updated_at": "2026-08-17T09:00:00Z"
 }

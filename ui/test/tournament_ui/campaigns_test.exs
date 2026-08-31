@@ -45,7 +45,9 @@ defmodule TournamentUi.CampaignsTest do
   end
 
   setup do
-    home = "/tmp/dt-campaigns-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-campaigns-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
 
@@ -187,6 +189,22 @@ defmodule TournamentUi.CampaignsTest do
       """)
 
       assert [%{validation_summary: "RED 2/2 GREEN 5/5 + 2 guards"}] =
+               Campaigns.get_campaign("bugsweep-aug").findings
+    end
+
+    test "validation summary renders the PERF segment like python does", %{home: home} do
+      seed_base!(home)
+
+      py!(home, """
+      import bin.campaigns as camp
+      camp.create_finding(campaign='bugsweep-aug', slug='a-perf')
+      camp.add_validation_row('bugsweep-aug', 'a-perf', red_intended=1, red_observed=1,
+                              green_total=3, green_passed=3,
+                              perf=[{'metric': 'allocs', 'measured': 0, 'budget': 0},
+                                    {'metric': 'p95_ms', 'measured': 20.0, 'budget': 16.6}])
+      """)
+
+      assert [%{validation_summary: "RED 1/1 GREEN 3/3 PERF 1/2"}] =
                Campaigns.get_campaign("bugsweep-aug").findings
     end
   end

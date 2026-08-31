@@ -1,8 +1,18 @@
 defmodule TournamentUiWeb.StartLive do
   @moduledoc """
-  Entry point for choosing between a fan-out domain and a direct artifact
-  bracket. Keeps unlike evaluation categories in separate tournaments so a
-  pairwise verdict always answers one stable question.
+  Entry point for starting a fan-out domain. Keeps unlike evaluation
+  categories in separate tournaments so a pairwise verdict always answers one
+  stable question.
+
+  The ladder at the top is the flow `docs/design/priority-tournament.md`
+  actually describes, and it does not stop at the judging surface: a domain
+  generates work orders, a person compares them in pairs, Swiss standings
+  settle a priority order, and the top of that table is dispatched and comes
+  back as a reviewed diff. Each rung navigates to the page where that step is
+  performed, so the front door teaches the route rather than only naming it.
+  A ladder that ended at "Improve" described a rubric-tuning loop as if it
+  were the product; the product is the ordered queue and the branches it
+  dispatches.
   """
   use TournamentUiWeb, :live_view
 
@@ -54,40 +64,67 @@ defmodule TournamentUiWeb.StartLive do
     ~H"""
     <.workspace_page
       current={:start}
+      flash={@flash}
       max_width="max-w-6xl"
       title="Start with one question"
-      subtitle="Choose one evaluation lens, generate comparable candidates from source material, then review every pair against that lens."
+      subtitle="Choose one evaluation lens, generate work orders from source material, compare them in pairs, and dispatch the top of the settled order."
       id="start-workflow"
     >
       <section id="tournament-pipeline" class="app-card p-5 mb-7" aria-label="Tournament workflow">
-        <div class="grid gap-3 md:grid-cols-5">
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <.pipeline_step
+            id="pipeline-step-domain"
             number="1"
-            title="Source"
-            detail="Code, records, notes, or prepared artifacts"
+            title="Domain"
+            detail="One source corpus paired with one evaluation lens"
+            href="/domains"
           />
           <.pipeline_step
+            id="pipeline-step-generate"
             number="2"
-            title="Generate"
-            detail="Produce focused candidates for one lens"
+            title="Work orders"
+            detail="Generate the findings that will compete"
+            href="/domains"
           />
           <.pipeline_step
+            id="pipeline-step-compare"
             number="3"
-            title="Review"
-            detail="Compare each pair with one stable rubric"
-          />
-          <.pipeline_step
-            number="4"
             title="Compare"
-            detail="See human and model outcomes together"
+            detail="Judge pairs on the wheel, one round at a time"
+            href="/judge"
           />
           <.pipeline_step
+            id="pipeline-step-standings"
+            number="4"
+            title="Standings"
+            detail="Swiss points settle the priority order"
+            href="/standings"
+          />
+          <.pipeline_step
+            id="pipeline-step-dispatch"
             number="5"
-            title="Improve"
-            detail="Tune the rubric from reviewed examples"
+            title="Dispatch"
+            detail="The top of the table is authored into a branch"
+            href="/branch-fixes"
+          />
+          <.pipeline_step
+            id="pipeline-step-diff"
+            number="6"
+            title="Reviewed diff"
+            detail="Red, green and guard, then approve and ship"
+            href="/branch-fixes"
             last
           />
         </div>
+
+        <p class="text-xs opacity-55 mt-4 pt-3 border-t app-hairline">
+          The loop closes on the way back. Every verdict is a labelled example of what
+          this team considers important, and
+          <.link navigate="/domains" class="font-medium underline underline-offset-2">
+            Improve rubric
+          </.link>
+          replays them into the judge that should eventually make these calls unaided.
+        </p>
       </section>
 
       <div class="flex items-end justify-between gap-4 mb-4">
@@ -142,48 +179,37 @@ defmodule TournamentUiWeb.StartLive do
           </div>
         </.link>
       </div>
-
-      <section class="app-card p-5 mt-7 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div class="text-xs uppercase tracking-wider opacity-55 mb-1">
-            Already have comparable candidates?
-          </div>
-          <h2 class="font-semibold">Run a direct artifact bracket</h2>
-          <p class="text-sm opacity-65 mt-1">
-            Compare existing files or documents without generating findings first.
-            A bracket is a single-elimination tournament: artifacts are paired,
-            judged head-to-head, and winners advance until one remains.
-          </p>
-        </div>
-        <.link navigate="/new" id="start-direct-bracket" class="btn btn-outline shrink-0">
-          Configure direct bracket <span aria-hidden="true">→</span>
-        </.link>
-      </section>
     </.workspace_page>
     """
   end
 
+  attr :id, :string, required: true
   attr :number, :string, required: true
   attr :title, :string, required: true
   attr :detail, :string, required: true
+  attr :href, :string, required: true
   attr :last, :boolean, default: false
 
   defp pipeline_step(assigns) do
     ~H"""
-    <div class="relative flex gap-3 pr-3">
+    <.link
+      id={@id}
+      navigate={@href}
+      class="group relative flex gap-3 pr-3 -m-1 p-1 rounded-lg transition hover:bg-base-200/60"
+    >
       <div class="size-7 shrink-0 rounded-full bg-primary text-primary-content text-xs font-bold grid place-items-center">
         {@number}
       </div>
       <div>
-        <div class="text-sm font-semibold">{@title}</div>
+        <div class="text-sm font-semibold group-hover:text-primary transition">{@title}</div>
         <div class="text-xs opacity-60 mt-0.5 leading-4">{@detail}</div>
       </div>
       <.icon
         :if={!@last}
         name="hero-chevron-right"
-        class="hidden md:block absolute right-0 top-1 size-4 opacity-25"
+        class="hidden xl:block absolute right-0 top-1 size-4 opacity-25"
       />
-    </div>
+    </.link>
     """
   end
 end

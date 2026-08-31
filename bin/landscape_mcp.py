@@ -60,27 +60,21 @@ SERVER_INFO = {"name": "landscape", "version": "1.0.0"}
 SKILLS_DIR = _REPO_ROOT / "skills"
 ASSEMBLE_PACK_SCRIPT = _REPO_ROOT / "bin" / "assemble_pack.py"
 
-# Module-level hook so in-process callers/tests can back assemble_pack when
-# bin/assemble_pack.py is not (yet) on disk. Signature:
-#   hook(project_id: str, role: str, objective: str) -> dict
 assemble_pack_hook: Optional[Callable[[str, str, str], dict]] = None
 
-# ── JSON-RPC error codes ──────────────────────────────────────────────────
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
-RESOURCE_NOT_FOUND = -32002  # MCP-standard resource-not-found code
-CAPABILITY_DENIED = -32010  # T1/T2
-HUMAN_ONLY = -32011  # T3
-NOT_IMPLEMENTED = -32012  # V2 / wave 4
+RESOURCE_NOT_FOUND = -32002
+CAPABILITY_DENIED = -32010
+HUMAN_ONLY = -32011
+NOT_IMPLEMENTED = -32012
 
-# ── S1 secret hygiene ─────────────────────────────────────────────────────
 _SECRET_KEY_RE = re.compile(
     r"(?:^|_|-)(?:secret|token|password|passwd|api_?key|credential|"
     r"authorization|auth|bearer|private_?key|signing_?key)s?(?:$|_|-)",
     re.IGNORECASE,
 )
-
 
 def _scrub(obj: Any) -> Any:
     """Recursively redact values whose keys look secret-like (S1).
@@ -104,25 +98,18 @@ def _scrub(obj: Any) -> Any:
         return [_scrub(v) for v in obj]
     return obj
 
-
-# ── wire helpers ──────────────────────────────────────────────────────────
-
-
 def send(msg: dict) -> None:
     sys.stdout.write(json.dumps(msg) + "\n")
     sys.stdout.flush()
 
-
 def ok(rid: Any, result: dict) -> None:
     send({"jsonrpc": "2.0", "id": rid, "result": result})
-
 
 def err(rid: Any, code: int, message: str, data: Optional[dict] = None) -> None:
     e: dict = {"code": code, "message": message}
     if data is not None:
         e["data"] = data
     send({"jsonrpc": "2.0", "id": rid, "error": e})
-
 
 def _json_contents(uri: str, payload: Any) -> dict:
     """resources/read result body: one JSON text content item, S1-scrubbed."""
@@ -136,7 +123,6 @@ def _json_contents(uri: str, payload: Any) -> dict:
         ]
     }
 
-
 def _text_result(payload: Any, is_error: bool = False) -> dict:
     """tools/call result body (MCP content shape), S1-scrubbed."""
     text = payload if isinstance(payload, str) else json.dumps(_scrub(payload), default=str)
@@ -145,13 +131,8 @@ def _text_result(payload: Any, is_error: bool = False) -> dict:
         r["isError"] = True
     return r
 
-
 class ResourceNotFound(LookupError):
     pass
-
-
-# ── Resource readers (all catalog access via bin.catalog) ────────────────
-
 
 def _project_by_ref(ref: str) -> dict:
     """Resolve {id} as numeric row id or project name."""
@@ -165,7 +146,6 @@ def _project_by_ref(ref: str) -> dict:
     except LookupError as e:
         raise ResourceNotFound(str(e))
 
-
 def read_projects_index(_rest: str) -> Any:
     out = []
     for p in catalog.list_projects("active"):
@@ -177,23 +157,21 @@ def read_projects_index(_rest: str) -> Any:
                 "name": p["name"],
                 "components": [c["name"] for c in components],
                 "source_count": len(sources),
-                "updated_at": p.get("updated_at"),  # R1: mutable entity
+                "updated_at": p.get("updated_at"),
             }
         )
     return {"projects": out}
 
-
 def read_project(ref: str) -> Any:
     p = _project_by_ref(ref)
     name = p["name"]
-    entry = dict(p)  # includes updated_at (R1: mutable entity)
+    entry = dict(p)
     entry["components"] = catalog.list_components(name)
     entry["sources"] = catalog.list_sources(name)
     entry["capabilities"] = catalog.list_capabilities()
     entry["environments"] = catalog.list_environments()
     entry["policies"] = catalog.list_policies()
     return entry
-
 
 def read_source(ref: str) -> Any:
     if not ref.isdigit():
@@ -204,11 +182,10 @@ def read_source(ref: str) -> Any:
             p["name"], "archived"
         ):
             if s["id"] == sid:
-                s = dict(s)  # includes updated_at (R1: mutable entity)
+                s = dict(s)
                 s["project"] = p["name"]
                 return s
     raise ResourceNotFound(f"no source with id {sid}")
-
 
 def read_snapshot(digest: str) -> Any:
     try:
@@ -219,14 +196,11 @@ def read_snapshot(digest: str) -> Any:
         "digest": row["digest"],
         "project_id": row["project_id"],
         "schema_version": row["schema_version"],
-        "snapshot": json.loads(row["manifest"]),  # R1: immutable, as stored
+        "snapshot": json.loads(row["manifest"]),
         "evidence_digests": catalog.list_snapshot_evidence(digest),
     }
 
-
 def read_pack(digest: str) -> Any:
-    # R3: packs are served ONLY by digest, exactly as assembled. No index,
-    # no role-override, no "unfiltered" variant.
     try:
         row = catalog.get_context_pack(digest)
     except LookupError as e:
@@ -236,9 +210,8 @@ def read_pack(digest: str) -> Any:
         "role": row["role"],
         "snapshot_digest": row["snapshot_digest"],
         "schema_version": row["schema_version"],
-        "pack": json.loads(row["manifest"]),  # R1: immutable, as stored
+        "pack": json.loads(row["manifest"]),
     }
-
 
 def read_evidence(ref: str) -> Any:
     try:
@@ -246,8 +219,6 @@ def read_evidence(ref: str) -> Any:
     except LookupError as e:
         raise ResourceNotFound(str(e))
     payload = json.loads(row["body"])
-    # R2: trust_tier is carried both at row level and inside the canonical
-    # payload. Serving code MUST NOT strip it.
     assert "trust_tier" in payload, "R2 violation: evidence payload lost trust_tier"
     return {
         "digest": row["digest"],
@@ -258,7 +229,6 @@ def read_evidence(ref: str) -> Any:
         "summary": row["summary"],
         "evidence": payload,
     }
-
 
 def _parse_frontmatter(text: str) -> dict:
     """Minimal YAML frontmatter reader: `key: value` lines between --- fences."""
@@ -274,7 +244,6 @@ def _parse_frontmatter(text: str) -> dict:
             meta[k.strip()] = v.strip()
     return meta
 
-
 def read_skills_index(_rest: str) -> Any:
     skills = []
     if SKILLS_DIR.is_dir():
@@ -288,7 +257,6 @@ def read_skills_index(_rest: str) -> Any:
                 }
             )
     return {"skills": skills}
-
 
 def read_resource(uri: str) -> dict:
     """Dispatch a landscape:// URI to its reader. Raises ResourceNotFound."""
@@ -307,8 +275,6 @@ def read_resource(uri: str) -> dict:
     if entity == "packs" and ref:
         return _json_contents(uri, read_pack(ref))
     if entity == "packs":
-        # R3: no pack index — packs exist only as digest-addressed,
-        # role-shaped artifacts.
         raise ResourceNotFound(
             "packs are digest-addressed only (landscape://packs/{digest}); "
             "there is no pack index or unfiltered-pack resource (R3)"
@@ -318,7 +284,6 @@ def read_resource(uri: str) -> dict:
     if entity == "skills" and not ref:
         return _json_contents(uri, read_skills_index(ref))
     raise ResourceNotFound(f"unknown resource URI: {uri!r}")
-
 
 def list_resources() -> list[dict]:
     """Enumerable resources: indexes + mutable catalog entities.
@@ -360,9 +325,6 @@ def list_resources() -> list[dict]:
                 }
             )
     return resources
-
-
-# ── Tools ─────────────────────────────────────────────────────────────────
 
 TOOLS: dict[str, dict] = {
     "assemble_pack": {
@@ -408,7 +370,6 @@ TOOLS: dict[str, dict] = {
     },
 }
 
-
 def tool_assemble_pack(args: dict) -> dict:
     project_id = args.get("project_id")
     role = args.get("role")
@@ -435,14 +396,11 @@ def tool_assemble_pack(args: dict) -> dict:
             cwd=str(_REPO_ROOT),
         )
         if proc.returncode != 0:
-            # stderr tail only — and scrubbed — never a stack trace on stdout.
             tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-3:]
             return _text_result(
                 f"ERROR: assemble_pack exited {proc.returncode}: " + " | ".join(tail),
                 is_error=True,
             )
-        # bin/assemble_pack.py emits human-readable lines then a final
-        # machine-readable "PACK_JSON: {...}" line — that line is the result.
         for out_line in reversed(proc.stdout.strip().splitlines()):
             if out_line.startswith("PACK_JSON: "):
                 return _text_result(json.loads(out_line[len("PACK_JSON: "):]))
@@ -455,12 +413,7 @@ def tool_assemble_pack(args: dict) -> dict:
         is_error=True,
     )
 
-
 TOOL_HANDLERS = {"assemble_pack": tool_assemble_pack}
-
-
-# ── main loop ─────────────────────────────────────────────────────────────
-
 
 def handle_tools_call(rid: Any, params: dict, capabilities: frozenset) -> None:
     name = params.get("name")
@@ -468,9 +421,6 @@ def handle_tools_call(rid: Any, params: dict, capabilities: frozenset) -> None:
     if name not in TOOLS:
         err(rid, METHOD_NOT_FOUND, f"unknown tool: {name!r}")
         return
-    # T3: approvals authenticate a human principal — always a hard error for
-    # ANY caller of this v1 server, checked before capability gating so the
-    # invariant is unmissable.
     if name == "signal_approval":
         err(
             rid,
@@ -481,7 +431,6 @@ def handle_tools_call(rid: Any, params: dict, capabilities: frozenset) -> None:
             "approve; untrusted text never approves anything.",
         )
         return
-    # T1/T2: capability-scoped, deny-by-default.
     if name not in capabilities:
         err(
             rid,
@@ -500,7 +449,6 @@ def handle_tools_call(rid: Any, params: dict, capabilities: frozenset) -> None:
         return
     handler = TOOL_HANDLERS[name]
     ok(rid, handler(args))
-
 
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(prog="landscape_mcp.py", description=__doc__.splitlines()[0])
@@ -551,7 +499,6 @@ def main(argv: Optional[list[str]] = None) -> int:
                     except ResourceNotFound as e:
                         err(rid, RESOURCE_NOT_FOUND, str(e))
             elif method == "tools/list":
-                # T1/T2: sessions only see tools inside their capability set.
                 ok(rid, {"tools": [TOOLS[n] for n in sorted(TOOLS) if n in capabilities]})
             elif method == "tools/call":
                 handle_tools_call(rid, params, capabilities)
@@ -568,7 +515,6 @@ def main(argv: Optional[list[str]] = None) -> int:
             if rid is not None:
                 err(rid, INTERNAL_ERROR, f"{type(e).__name__}: {e}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

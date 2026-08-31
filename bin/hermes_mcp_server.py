@@ -81,16 +81,12 @@ TOOLS = [
     },
 ]
 
-
-# ── stderr-only logging (stdout is reserved for MCP JSON-RPC) ─────────────
 _LOG_PATH = os.environ.get("HERMES_HARNESS_SERVER_LOG", "/tmp/data-tournaments/mcp-server.log")
 try:
     Path(_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
 except Exception:
-    # Fall back to /tmp if the configured path's parent isn't writable.
     _LOG_PATH = "/tmp/tournament-mcp-server.log"
 LOGF = open(_LOG_PATH, "a", buffering=1)
-
 
 def log(msg: str) -> None:
     try:
@@ -98,11 +94,8 @@ def log(msg: str) -> None:
     except Exception:
         pass
 
-
-# ── Langfuse client (lazy, optional) ──────────────────────────────────────
-_LF = None  # langfuse.Langfuse instance, or None if unavailable
-_LF_TRACE_CTX: Optional[dict] = None  # {"trace_id": ..., "parent_span_id": ...}
-
+_LF = None
+_LF_TRACE_CTX: Optional[dict] = None
 
 def _init_langfuse(cfg: dict) -> None:
     """Initialize the Langfuse client + trace context once. Failures are non-fatal."""
@@ -130,7 +123,6 @@ def _init_langfuse(cfg: dict) -> None:
         _LF_TRACE_CTX["parent_span_id"] = parent
     log(f"langfuse: tracing enabled, trace_id={trace_id[:8]}…")
 
-
 def _emit_observation(name: str, *, as_type: str, input: Any = None,
                       output: Any = None, level: str = "DEFAULT",
                       status_message: Optional[str] = None) -> None:
@@ -151,7 +143,6 @@ def _emit_observation(name: str, *, as_type: str, input: Any = None,
     except Exception as e:
         log(f"langfuse: emit {name} failed: {e!r}")
 
-
 def _emit_score(name: str, value: Any, *, comment: Optional[str] = None,
                 data_type: Optional[str] = None) -> None:
     """Attach a score to the current trace. Used to surface winner_id."""
@@ -167,27 +158,21 @@ def _emit_score(name: str, value: Any, *, comment: Optional[str] = None,
     except Exception as e:
         log(f"langfuse: score {name} failed: {e!r}")
 
-
-# ── MCP wire helpers ──────────────────────────────────────────────────────
 def send(msg: dict) -> None:
     sys.stdout.write(json.dumps(msg) + "\n")
     sys.stdout.flush()
 
-
 def err(rid: Any, code: int, message: str) -> None:
     send({"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}})
 
-
 def ok(rid: Any, result: dict) -> None:
     send({"jsonrpc": "2.0", "id": rid, "result": result})
-
 
 def text_result(text: str, is_error: bool = False) -> dict:
     r: dict = {"content": [{"type": "text", "text": text}]}
     if is_error:
         r["isError"] = True
     return r
-
 
 def load_config() -> dict:
     if not CONFIG_PATH or not os.path.exists(CONFIG_PATH):
@@ -199,8 +184,6 @@ def load_config() -> dict:
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
-
-# ── Tool handlers ─────────────────────────────────────────────────────────
 def handle_read_file(args: dict) -> dict:
     path = args.get("path", "")
     try:
@@ -225,13 +208,11 @@ def handle_read_file(args: dict) -> dict:
     )
     return text_result(text)
 
-
 def handle_pick_winner(args: dict) -> dict:
     winner_id = args.get("winner_id")
     reasoning = args.get("reasoning", "")
     md = args.get("markdown", "")
 
-    # ── Validate ──────────────────────────────────────────────────────────
     cfg = load_config()
     n_inputs = int(cfg.get("n_inputs") or 2)
     valid_ids = list(range(1, n_inputs + 1)) if n_inputs >= 1 else [1, 2]
@@ -263,21 +244,18 @@ def handle_pick_winner(args: dict) -> dict:
         )
         return text_result("ERROR: outfile/winner_file not configured", is_error=True)
 
-    # ── Persist via the IPC files ─────────────────────────────────────────
     Path(outfile).write_text(md, encoding="utf-8")
     Path(winner_file).write_text(
         json.dumps({"winner_id": winner_id, "reasoning": reasoning}, indent=2),
         encoding="utf-8",
     )
 
-    # ── Telemetry ─────────────────────────────────────────────────────────
     _emit_observation(
         "pick_winner",
         as_type="tool",
         input={"winner_id": winner_id, "reasoning": reasoning, "markdown_bytes": len(md)},
         output={"markdown": md, "outfile": outfile, "winner_file": winner_file},
     )
-    # Surface winner_id as a categorical score so it's filterable in the UI.
     _emit_score(
         "winner_id",
         f"input_{winner_id}",
@@ -286,11 +264,8 @@ def handle_pick_winner(args: dict) -> dict:
     )
     return text_result(f"submitted, winner=input_{winner_id}")
 
-
 HANDLERS = {"read_file": handle_read_file, "pick_winner": handle_pick_winner}
 
-
-# ── main loop ─────────────────────────────────────────────────────────────
 def main() -> None:
     log(f"startup: CONFIG_PATH={CONFIG_PATH!r}")
     try:
@@ -347,7 +322,6 @@ def main() -> None:
         else:
             if rid is not None:
                 err(rid, -32601, f"method not found: {method}")
-
 
 if __name__ == "__main__":
     try:

@@ -1,19 +1,4 @@
 #!/usr/bin/env bash
-# hermes-harness.sh [-p PARALLELISM] <label> <file1> [file2 ...]
-#
-# Restricted Hermes-backed agent harness. The agent has exactly two MCP tools:
-#   - read_file(path) — read a file from disk
-#   - pick_winner(winner_id, reasoning, markdown) — submit final answer + winner
-#
-# Tracing: when the orchestrator sets TOURNAMENT_TRACE_ID (and optionally
-# TOURNAMENT_PARENT_OBSERVATION_ID), those flow through into the per-slot
-# config JSON the MCP server reads, so all read_file/pick_winner calls
-# become child observations under the orchestrator's match trace.
-#
-# IPC channel: pick_winner writes:
-#   - $OUTFILE       — synthesis markdown (full answer)
-#   - $WINNER_FILE   — JSON {"winner_id": 1|2, "reasoning": "..."}
-# Both must exist + be non-empty after a successful match.
 set -euo pipefail
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
@@ -73,7 +58,6 @@ sys.exit(0)
     "$0" "$LABEL" "${INPUTS[@]}"
 fi
 
-# ── Build the per-slot MCP server config ──────────────────────────────────
 N_INPUTS="${#INPUTS[@]}"
 python3 - "$CONFIG" "$OUTFILE" "$WINNER_FILE" "$LABEL" "$N_INPUTS" \
   "${TOURNAMENT_TRACE_ID:-}" "${TOURNAMENT_PARENT_OBSERVATION_ID:-}" <<'PY'
@@ -112,15 +96,7 @@ LOG="$DATA_HOME/sessions/$(basename "$OUTFILE").log"
 
 HERMES_ARGS=(chat -q "$PROMPT" -Q -t "$SERVER_NAME" --yolo --max-turns 20 --source tool)
 
-# Forward LANGFUSE_* env so the in-sandbox MCP server can publish spans.
-# Hermes invocation is overridable via TOURNAMENT_HERMES_CMD (space-separated
-# argv prefix); default falls back to a local sandboxed-agents flake. Set
-# this in your shell profile or in the orchestrator's env if your hermes
-# install lives elsewhere.
 HERMES_CMD_RAW="${TOURNAMENT_HERMES_CMD:-nix run ~/projects/sandboxed-agents#hermes --}"
-# Expand leading "~/" / "~" since word-splitting from a variable doesn't
-# trigger tilde expansion. (We deliberately don't `eval` the string —
-# users shouldn't have to quote-escape every special char in their cmd.)
 HERMES_CMD_RAW="${HERMES_CMD_RAW//\~\//$HOME/}"
 # shellcheck disable=SC2206  # intentional word-splitting: argv from env string
 HERMES_PREFIX=( $HERMES_CMD_RAW )
@@ -131,7 +107,6 @@ LANGFUSE_HOST="${LANGFUSE_HOST:-https://cloud.langfuse.com}" \
 "${HERMES_PREFIX[@]}" "${HERMES_ARGS[@]}" \
   >"$LOG" 2>&1 || { echo "ERROR: hermes chat failed (exit $?)" >&2; tail -40 "$LOG" >&2; exit 3; }
 
-# Blank the config so a stale trace_id doesn't leak into a future invocation.
 echo '{}' > "$CONFIG"
 
 if [ ! -s "$OUTFILE" ]; then
@@ -147,9 +122,6 @@ fi
 
 SUBMIT=$(cat "$OUTFILE")
 
-# Required-section validation. Keep as a hard local gate so failures show
-# up in the harness exit code (the orchestrator's evaluator double-checks
-# the same thing for observability, but failures here exit non-zero).
 if [ -n "${TOURNAMENT_REQUIRED_SECTIONS:-}" ]; then
   IFS=$'\x1f' read -ra REQUIRED <<<"$TOURNAMENT_REQUIRED_SECTIONS"
 else
@@ -170,6 +142,4 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   exit 2
 fi
 
-# stdout: synthesis markdown. The winner_file is read directly by the
-# orchestrator (env-passed path), since we can only have one stdout stream.
 printf '%s\n' "$SUBMIT"

@@ -101,7 +101,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
            (4, 'head4444', 1, 1, 2, 2, 1, 1, 1);
 
     INSERT INTO fix_branch_review (fix_branch_id, tested_sha, reviewer, decision, rationale)
-    VALUES (4, 'head4444', 'esteban', 'approve', 'shipped it');
+    VALUES (4, 'head4444', 'changeme', 'approve', 'shipped it');
     """)
   end
 
@@ -144,7 +144,9 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
   end
 
   setup do
-    home = "/tmp/dt-branchfixes-live-#{System.unique_integer([:positive])}"
+    home =
+      "/tmp/dt-branchfixes-live-#{System.os_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+
     File.mkdir_p!(home)
     System.put_env("DATA_TOURNAMENTS_HOME", home)
     System.delete_env("DT_OPERATOR")
@@ -237,12 +239,12 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
       home: home
     } do
       seed!(home)
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       {:ok, view, html} = live(conn, "/branch-fixes/1")
 
       assert html =~ ~s(id="decision-panel")
-      assert html =~ "esteban"
+      assert html =~ "changeme"
       refute html =~ ~s(id="not-decidable-hint")
       refute view |> element("#approve-button") |> render() =~ "disabled"
       refute view |> element("#reject-button") |> render() =~ "disabled"
@@ -255,7 +257,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
     } do
       seed!(home)
       install_stub!(home, 0)
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       {:ok, view, _html} = live(conn, "/branch-fixes/1")
 
@@ -264,7 +266,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
       |> render_submit(%{"decision" => "approve"})
 
       assert File.read!(Path.join(home, "argv.log")) =~
-               "review --id 1 --reviewer esteban --decision approve --rationale clean evidence"
+               "review --id 1 --reviewer changeme --decision approve --rationale clean evidence"
 
       assert Phoenix.Flash.get(:sys.get_state(view.pid).socket.assigns.flash, :info) ==
                "Review recorded: approve"
@@ -273,7 +275,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
     test "nonzero CLI exit surfaces stderr in an error banner", %{conn: conn, home: home} do
       seed!(home)
       install_stub!(home, 1)
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       {:ok, view, _html} = live(conn, "/branch-fixes/1")
 
@@ -303,7 +305,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
       home: home
     } do
       seed!(home)
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       # Branch 3 is status=validated but its validation tested oldsha33 while
       # head is head3333 — reject/needs-changes stay available, approve does not.
@@ -322,7 +324,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
     } do
       seed!(home)
       sql!(home, "UPDATE fix_branch SET status='stale' WHERE id=3;")
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       {:ok, _view, html} = live(conn, "/branch-fixes/3")
 
@@ -333,7 +335,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
 
     test "terminal branch hides the decision surface entirely", %{conn: conn, home: home} do
       seed!(home)
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       {:ok, _view, html} = live(conn, "/branch-fixes/4")
 
@@ -662,7 +664,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
       # Promote branch 1 to approved so the panel is live for id 1.
       sql!(home, "UPDATE fix_branch SET status='approved' WHERE id=1;")
       install_ship_stub!(home, 0)
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       {:ok, view, _html} = live(conn, "/branch-fixes/1")
 
@@ -670,7 +672,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
       view |> element("#ship-button") |> render_click()
 
       assert File.read!(Path.join(home, "ship_argv.log")) =~
-               "ship --id 1 --requested-by esteban"
+               "ship --id 1 --requested-by changeme"
 
       assert Phoenix.Flash.get(:sys.get_state(view.pid).socket.assigns.flash, :info) =~
                "Release started:"
@@ -682,7 +684,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
     } do
       seed!(home)
       install_ship_stub!(home, 1, "REFUSED: stale")
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       {:ok, view, _html} = live(conn, "/branch-fixes/4")
 
@@ -695,7 +697,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
 
     test "validated-but-not-approved branch has NO ship panel", %{conn: conn, home: home} do
       seed!(home)
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       {:ok, _view, html} = live(conn, "/branch-fixes/1")
 
@@ -705,7 +707,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
 
     test "failed branch has NO ship panel", %{conn: conn, home: home} do
       seed!(home)
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       {:ok, _view, html} = live(conn, "/branch-fixes/2")
 
@@ -957,10 +959,10 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
       sql!(home, """
       UPDATE fix_branch SET status='shipping' WHERE id=4;
       INSERT INTO fix_branch_ship (fix_branch_id, workflow_id, tested_sha, requested_by)
-      VALUES (4, 'release:fix/done:head4444', 'head4444', 'esteban');
+      VALUES (4, 'release:fix/done:head4444', 'head4444', 'changeme');
       """)
 
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
       {:ok, view, html} = live(conn, "/branch-fixes/4")
 
       assert html =~ ~s(id="shipping-panel")
@@ -995,7 +997,7 @@ defmodule TournamentUiWeb.BranchFixesLiveTest do
     } do
       seed!(home)
       sql!(home, "UPDATE fix_branch SET status='rolled-back' WHERE id=4;")
-      System.put_env("DT_OPERATOR", "esteban")
+      System.put_env("DT_OPERATOR", "changeme")
 
       {:ok, view, html} = live(conn, "/branch-fixes/4")
 

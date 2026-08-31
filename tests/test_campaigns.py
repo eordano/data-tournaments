@@ -13,7 +13,6 @@ import pytest
 
 from bin.landscape import EvidenceRef, SourceType, TrustTier
 
-
 @pytest.fixture
 def campaigns(tmp_data_home):
     from bin import campaigns as mod
@@ -21,19 +20,16 @@ def campaigns(tmp_data_home):
     mod.init()
     return mod
 
-
 @pytest.fixture
 def catalog(tmp_data_home):
     from bin import catalog as mod
 
     return mod
 
-
 @pytest.fixture
 def project(campaigns, catalog):
     catalog.create_project(name="widget-engine")
     return "widget-engine"
-
 
 @pytest.fixture
 def campaign(campaigns, project):
@@ -47,7 +43,6 @@ def campaign(campaigns, project):
     )
     return "bugsweep-test"
 
-
 @pytest.fixture
 def raw(tmp_data_home):
     """Raw connection for asserting stored values / firing triggers."""
@@ -56,7 +51,6 @@ def raw(tmp_data_home):
     conn.execute("PRAGMA foreign_keys = ON")
     yield conn
     conn.close()
-
 
 def _insert_evidence(catalog, project: str, uri: str) -> str:
     """Insert an evidence_ref via the catalog path; return its digest."""
@@ -73,10 +67,6 @@ def _insert_evidence(catalog, project: str, uri: str) -> str:
         why_selected="invented test evidence",
     )
     return catalog.insert_evidence_ref(ref, source_id=sid)
-
-
-# ── init / schema ─────────────────────────────────────────────────────────
-
 
 class TestInit:
     def test_init_twice_is_idempotent(self, campaigns):
@@ -100,10 +90,6 @@ class TestInit:
             "validation_ledger_immutable", "validation_ledger_no_delete",
         ):
             assert tr in triggers, f"missing trigger {tr}"
-
-
-# ── Campaign CRUD ─────────────────────────────────────────────────────────
-
 
 class TestCampaignCrud:
     def test_create_get_round_trip(self, campaigns, campaign):
@@ -141,10 +127,6 @@ class TestCampaignCrud:
         with pytest.raises(LookupError):
             campaigns.close_campaign("nope")
 
-
-# ── Finding CRUD ──────────────────────────────────────────────────────────
-
-
 class TestFindingCrud:
     def test_create_get_round_trip(self, campaigns, campaign):
         campaigns.create_finding(
@@ -172,7 +154,7 @@ class TestFindingCrud:
         with pytest.raises(ValueError, match="already exists"):
             campaigns.create_finding(campaign=campaign, slug="dup-slug")
         campaigns.create_campaign(project=project, name="other", kind="bugsweep")
-        campaigns.create_finding(campaign="other", slug="dup-slug")  # fine
+        campaigns.create_finding(campaign="other", slug="dup-slug")
 
     def test_list_findings_filter_by_state(self, campaigns, campaign):
         campaigns.create_finding(campaign=campaign, slug="a-one")
@@ -189,10 +171,6 @@ class TestFindingCrud:
     def test_missing_finding_raises(self, campaigns, campaign):
         with pytest.raises(LookupError):
             campaigns.get_finding(campaign, "nope")
-
-
-# ── State machine ─────────────────────────────────────────────────────────
-
 
 class TestFindingStateMachine:
     def test_valid_transition_updates_state_and_updated_at(
@@ -246,7 +224,6 @@ class TestFindingStateMachine:
     def test_terminal_states_are_sticky(self, campaigns, campaign, terminal):
         campaigns.create_finding(campaign=campaign, slug="s")
         campaigns.set_finding_state(campaign, "s", terminal)
-        # A late update is a silent no-op (workflow_runs precedent).
         campaigns.set_finding_state(campaign, "s", "candidate")
         assert campaigns.get_finding(campaign, "s")["state"] == terminal
 
@@ -268,17 +245,12 @@ class TestFindingStateMachine:
         with pytest.raises(sqlite3.IntegrityError):
             raw.execute("UPDATE finding SET state='no_go' WHERE slug='s'")
 
-
-# ── Evidence links ────────────────────────────────────────────────────────
-
-
 class TestFindingEvidence:
     def test_link_and_fetch(self, campaigns, catalog, project, campaign):
         campaigns.create_finding(campaign=campaign, slug="s")
         digest = _insert_evidence(catalog, project, "doc://tracker/issue-1")
         campaigns.link_finding_evidence(campaign, "s", digest, role="signal")
         campaigns.link_finding_evidence(campaign, "s", digest, role="root-cause")
-        # duplicate (digest, role) is a no-op
         campaigns.link_finding_evidence(campaign, "s", digest, role="signal")
         f = campaigns.get_finding(campaign, "s")
         assert [(e["evidence_digest"], e["role"]) for e in f["evidence"]] == [
@@ -297,10 +269,6 @@ class TestFindingEvidence:
             campaigns.link_finding_evidence(
                 campaign, "s", "0" * 64, role="signal"
             )
-
-
-# ── Review lens verdicts: append-only + one repair cycle ─────────────────
-
 
 class TestLensVerdicts:
     def test_confirms_accumulate(self, campaigns, campaign):
@@ -410,10 +378,6 @@ class TestLensVerdicts:
         with pytest.raises(sqlite3.DatabaseError, match="append-only"):
             raw.execute("DELETE FROM review_lens_verdict WHERE id=1")
 
-
-# ── Validation ledger ─────────────────────────────────────────────────────
-
-
 class TestValidationLedger:
     def test_rows_append_and_attach(self, campaigns, campaign):
         campaigns.create_finding(campaign=campaign, slug="s")
@@ -441,15 +405,10 @@ class TestValidationLedger:
         with pytest.raises(sqlite3.DatabaseError, match="append-only"):
             raw.execute("DELETE FROM validation_ledger WHERE id=1")
 
-
-# ── Campaign ledger rollup (INDEX.md shape) ──────────────────────────────
-
-
 class TestCampaignLedger:
     def _seed(self, campaigns, catalog, project, campaign):
         """Seed a mini-campaign mirroring the SHAPE of a real aug16 ledger
         (all data invented)."""
-        # Finding 1: clean two-lens CONFIRM, fully validated.
         campaigns.create_finding(
             campaign=campaign, slug="frobnicator-nre-on-teardown",
             source_kind="sentry",
@@ -471,7 +430,6 @@ class TestCampaignLedger:
         campaigns.set_finding_state(
             campaign, "frobnicator-nre-on-teardown", "confirmed_validated"
         )
-        # Finding 2: REFUTE → repaired, validated with guards.
         campaigns.create_finding(
             campaign=campaign, slug="widget-list-double-free",
             source_kind="slack",
@@ -500,7 +458,6 @@ class TestCampaignLedger:
         campaigns.set_finding_state(
             campaign, "widget-list-double-free", "confirmed_validated"
         )
-        # Finding 3: NO_GO (already-fixed), never reviewed/validated.
         campaigns.create_finding(
             campaign=campaign, slug="sprocket-timeout-flood",
             source_kind="autoclosed",
@@ -557,10 +514,6 @@ class TestCampaignLedger:
         )
         ledger = campaigns.campaign_ledger(campaign)
         assert ledger["findings"][0]["validation"] == "RED 2/2 GREEN 4/4"
-
-
-# ── CLI smoke ─────────────────────────────────────────────────────────────
-
 
 class TestCli:
     def test_cli_round_trip(self, campaigns, project, capsys):
